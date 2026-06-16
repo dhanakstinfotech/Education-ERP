@@ -1,244 +1,223 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { Search, Download, Send, Eye, CheckCircle, Calculator, BarChart3, FileText } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useToast } from '../components/Toast';
 import {
-  FileText,
-  Calculator,
-  CheckCircle,
-  Upload,
-  Download,
-  Search,
-  Filter,
-  Eye,
-  Send,
-  BarChart3,
-} from 'lucide-react';
+  PageHeader, StatCard, DataTable, TableRow, Td, StatusBadge,
+  ActionButton, LoadingState, EmptyState, Input, Select
+} from '../components/ui';
 
-interface Result {
-  id: string;
-  rollNo: string;
-  studentName: string;
-  program: string;
-  semester: string;
-  totalMarks: number;
-  obtainedMarks: number;
-  percentage: number;
-  gpa: number;
-  cgpa: number;
-  result: 'pass' | 'fail' | 'absent';
-  status: 'pending' | 'approved' | 'published';
-}
-
-const mockResults: Result[] = [
-  { id: '1', rollNo: '21CS001', studentName: 'Rahul Sharma', program: 'B.Tech CSE', semester: 'Semester 6', totalMarks: 500, obtainedMarks: 423, percentage: 84.6, gpa: 8.46, cgpa: 8.12, result: 'pass', status: 'published' },
-  { id: '2', rollNo: '21CS002', studentName: 'Priya Patel', program: 'B.Tech CSE', semester: 'Semester 6', totalMarks: 500, obtainedMarks: 378, percentage: 75.6, gpa: 7.56, cgpa: 7.89, result: 'pass', status: 'approved' },
-  { id: '3', rollNo: '21CS003', studentName: 'Amit Kumar', program: 'B.Tech CSE', semester: 'Semester 6', totalMarks: 500, obtainedMarks: 198, percentage: 39.6, gpa: 3.96, cgpa: 5.23, result: 'fail', status: 'pending' },
-  { id: '4', rollNo: '21CS004', studentName: 'Sneha Reddy', program: 'B.Tech CSE', semester: 'Semester 6', totalMarks: 500, obtainedMarks: 467, percentage: 93.4, gpa: 9.34, cgpa: 8.89, result: 'pass', status: 'approved' },
-  { id: '5', rollNo: '21EC001', studentName: 'Anjali Verma', program: 'B.Tech ECE', semester: 'Semester 6', totalMarks: 500, obtainedMarks: 412, percentage: 82.4, gpa: 8.24, cgpa: 7.78, result: 'pass', status: 'pending' },
+const GRADE_SCALE = [
+  { grade: 'O', min: 90, points: 10 },
+  { grade: 'A+', min: 80, points: 9 },
+  { grade: 'A', min: 70, points: 8 },
+  { grade: 'B+', min: 60, points: 7 },
+  { grade: 'B', min: 50, points: 6 },
+  { grade: 'C', min: 40, points: 5 },
+  { grade: 'F', min: 0, points: 0 },
 ];
 
-const gradeScale = [
-  { grade: 'O', range: '90-100', points: 10 },
-  { grade: 'A+', range: '80-89', points: 9 },
-  { grade: 'A', range: '70-79', points: 8 },
-  { grade: 'B+', range: '60-69', points: 7 },
-  { grade: 'B', range: '50-59', points: 6 },
-  { grade: 'C', range: '40-49', points: 5 },
-  { grade: 'F', range: '0-39', points: 0 },
-];
+type Section = 'results' | 'approval' | 'publish';
 
 export default function ResultProcessing() {
-  const [activeSection, setActiveSection] = useState<'results' | 'grades' | 'approval' | 'publish'>('results');
+  const [section, setSection] = useState<Section>('results');
+  const [results, setResults] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [calculating, setCalculating] = useState(false);
+  const { toast } = useToast();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('results')
+      .select('*, students(name, roll_no, programs(name)), academic_years(name)')
+      .order('created_at', { ascending: false });
+    setResults(data ?? []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const calculateGPA = async () => {
+    setCalculating(true);
+    // For each result, compute GPA from mark_entries
+    const { data: marks } = await supabase.from('mark_entries').select('student_id, total_marks, internal_max, external_max, subjects(credits)');
+    if (!marks?.length) { toast('No mark entries found', 'error'); setCalculating(false); return; }
+
+    const byStudent: Record<string, any[]> = {};
+    marks.forEach(m => {
+      if (!byStudent[m.student_id]) byStudent[m.student_id] = [];
+      byStudent[m.student_id].push(m);
+    });
+
+    for (const [studentId, entries] of Object.entries(byStudent)) {
+      const totalCredits = entries.reduce((s, e) => s + (e.subjects?.credits ?? 3), 0);
+      const creditPoints = entries.reduce((s, e) => {
+        const maxMarks = (e.internal_max ?? 20) + (e.external_max ?? 80);
+        const pct = ((e.total_marks ?? 0) / maxMarks) * 100;
+        const gradeEntry = GRADE_SCALE.find(g => pct >= g.min) ?? GRADE_SCALE[GRADE_SCALE.length - 1];
+        return s + gradeEntry.points * (e.subjects?.credits ?? 3);
+      }, 0);
+      const gpa = totalCredits > 0 ? creditPoints / totalCredits : 0;
+      const totalObtained = entries.reduce((s, e) => s + (e.total_marks ?? 0), 0);
+      const totalMax = entries.reduce((s, e) => s + (e.internal_max ?? 20) + (e.external_max ?? 80), 0);
+      const pct = totalMax > 0 ? (totalObtained / totalMax) * 100 : 0;
+      const hasFail = entries.some(e => {
+        const max = (e.internal_max ?? 20) + (e.external_max ?? 80);
+        const p = ((e.total_marks ?? 0) / max) * 100;
+        return p < 40;
+      });
+
+      await supabase.from('results').upsert({
+        student_id: studentId,
+        academic_year_id: entries[0]?.academic_year_id ?? null,
+        semester_number: 6,
+        total_marks: totalMax,
+        obtained_marks: totalObtained,
+        percentage: Math.round(pct * 100) / 100,
+        gpa: Math.round(gpa * 100) / 100,
+        cgpa: Math.round(gpa * 100) / 100,
+        result: hasFail ? 'fail' : 'pass',
+        status: 'pending',
+      }, { onConflict: 'student_id, academic_year_id, semester_number' });
+    }
+    toast('GPA calculated for all students');
+    load();
+    setCalculating(false);
+  };
+
+  const updateStatus = async (id: string, status: string) => {
+    const { error } = await supabase.from('results').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) toast(error.message, 'error');
+    else { toast(`Result ${status}`); load(); }
+  };
+
+  const bulkPublish = async () => {
+    const approved = results.filter(r => r.status === 'approved').map(r => r.id);
+    if (!approved.length) { toast('No approved results to publish', 'info'); return; }
+    const { error } = await supabase.from('results').update({ status: 'published' }).in('id', approved);
+    if (error) toast(error.message, 'error');
+    else { toast(`${approved.length} results published`); load(); }
+  };
+
+  const filtered = results.filter(r => {
+    const matchSearch = r.students?.name?.toLowerCase().includes(search.toLowerCase()) ||
+      r.students?.roll_no?.toLowerCase().includes(search.toLowerCase());
+    const matchStatus = !statusFilter || r.status === statusFilter;
+    return matchSearch && matchStatus;
+  });
+
+  const passCount = results.filter(r => r.result === 'pass').length;
+  const passRate = results.length > 0 ? Math.round((passCount / results.length) * 100) : 0;
+  const avgGpa = results.length > 0
+    ? (results.reduce((s, r) => s + (r.gpa ?? 0), 0) / results.length).toFixed(2)
+    : '—';
+
+  const SECTIONS = [
+    { id: 'results' as Section, name: 'Results', icon: FileText },
+    { id: 'approval' as Section, name: 'Approval', icon: CheckCircle },
+    { id: 'publish' as Section, name: 'Publish', icon: Send },
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-800">Result Processing</h1>
-          <p className="text-slate-500 mt-1">Calculate grades, process results, and publish</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 bg-white rounded-xl text-slate-600 hover:bg-slate-50 font-medium">
-            <Calculator className="w-5 h-5" />
-            <span>Calculate GPA</span>
-          </button>
-          <button className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 shadow-sm">
-            <Send className="w-5 h-5" />
-            <span>Publish Results</span>
-          </button>
-        </div>
-      </div>
+      <PageHeader title="Result Processing" subtitle="Calculate grades, process and publish results">
+        <ActionButton loading={calculating} onClick={calculateGPA}><Calculator className="w-4 h-4" />Calculate GPA</ActionButton>
+        <ActionButton onClick={bulkPublish}><Send className="w-4 h-4" />Publish Approved</ActionButton>
+      </PageHeader>
 
-      {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-xl p-4 border border-slate-200">
-          <p className="text-sm text-slate-500">Total Students</p>
-          <p className="text-2xl font-bold text-slate-800">1,245</p>
-        </div>
-        <div className="bg-white rounded-xl p-4 border border-slate-200">
-          <p className="text-sm text-slate-500">Pass Rate</p>
-          <p className="text-2xl font-bold text-emerald-600">87.3%</p>
-        </div>
-        <div className="bg-white rounded-xl p-4 border border-slate-200">
-          <p className="text-sm text-slate-500">Average GPA</p>
-          <p className="text-2xl font-bold text-blue-600">7.84</p>
-        </div>
-        <div className="bg-white rounded-xl p-4 border border-slate-200">
-          <p className="text-sm text-slate-500">Pending Approval</p>
-          <p className="text-2xl font-bold text-amber-600">156</p>
-        </div>
+        <StatCard label="Total Students" value={results.length} color="blue" />
+        <StatCard label="Pass Rate" value={`${passRate}%`} color="emerald" />
+        <StatCard label="Average GPA" value={avgGpa} color="violet" />
+        <StatCard label="Pending Approval" value={results.filter(r => r.status === 'pending').length} color="amber" />
       </div>
 
-      {/* Grade Scale */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-        <h3 className="font-semibold text-slate-800 mb-3">Grade Scale</h3>
+      {/* Grade scale */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <p className="text-sm font-semibold text-slate-700 mb-3">Grade Scale</p>
         <div className="flex flex-wrap gap-2">
-          {gradeScale.map((g) => (
-            <div key={g.grade} className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-lg">
+          {GRADE_SCALE.map(g => (
+            <div key={g.grade} className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-lg text-sm">
               <span className={`font-bold ${g.grade === 'F' ? 'text-red-600' : 'text-slate-800'}`}>{g.grade}</span>
-              <span className="text-sm text-slate-500">{g.range}%</span>
-              <span className="text-sm text-slate-400">({g.points})</span>
+              <span className="text-slate-500">{g.min}%+</span>
+              <span className="text-slate-400 text-xs">({g.points} pts)</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex gap-2 overflow-x-auto pb-2">
-        {[
-          { id: 'results', name: 'Results', icon: FileText },
-          { id: 'grades', name: 'Grade Calculation', icon: BarChart3 },
-          { id: 'approval', name: 'Approval', icon: CheckCircle },
-          { id: 'publish', name: 'Publish', icon: Send },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveSection(tab.id as any)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium whitespace-nowrap transition-colors ${
-              activeSection === tab.id
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            <tab.icon className="w-4 h-4" />
-            {tab.name}
+      <div className="flex gap-2">
+        {SECTIONS.map(s => (
+          <button key={s.id} onClick={() => setSection(s.id)}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors ${
+              section === s.id ? 'bg-blue-600 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}>
+            <s.icon className="w-4 h-4" />{s.name}
           </button>
         ))}
       </div>
 
-      {/* Main Content */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        {/* Search */}
-        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by Roll No or Name..."
-              className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+        <div className="p-4 border-b border-slate-100 flex flex-wrap gap-3">
+          <div className="relative flex-1 min-w-[180px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Input className="pl-9" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          <select className="px-4 py-2.5 border border-slate-200 rounded-xl bg-white">
-            <option>All Programs</option>
-            <option>B.Tech CSE</option>
-            <option>B.Tech ECE</option>
-          </select>
-          <select className="px-4 py-2.5 border border-slate-200 rounded-xl bg-white">
-            <option>All Status</option>
-            <option>Pending</option>
-            <option>Approved</option>
-            <option>Published</option>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+            className="px-4 py-2.5 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="published">Published</option>
           </select>
         </div>
 
-        {/* Results Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-slate-50">
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Roll No</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Student Name</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Program</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Marks</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">%</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">GPA</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">CGPA</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Result</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Status</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {mockResults.map((result) => (
-                <tr key={result.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-4 py-4 font-mono text-slate-800">{result.rollNo}</td>
-                  <td className="px-4 py-4 font-medium text-slate-800">{result.studentName}</td>
-                  <td className="px-4 py-4 text-slate-600">{result.program}</td>
-                  <td className="px-4 py-4 text-slate-800">{result.obtainedMarks}/{result.totalMarks}</td>
-                  <td className="px-4 py-4">
+        {loading ? <LoadingState /> : (
+          <DataTable columns={['Roll No', 'Student', 'Program', 'Marks', '%', 'GPA', 'CGPA', 'Result', 'Status', 'Actions']}>
+            {filtered.length === 0
+              ? <tr><td colSpan={10}><EmptyState message="No results found. Click Calculate GPA to process." /></td></tr>
+              : filtered.filter(r => section === 'results' || section === 'publish' || r.status === 'pending').map(r => (
+                <TableRow key={r.id}>
+                  <Td><span className="font-mono text-xs">{r.students?.roll_no}</span></Td>
+                  <Td className="font-medium text-slate-800">{r.students?.name}</Td>
+                  <Td className="text-slate-500 text-xs max-w-[120px] truncate">{r.students?.programs?.name ?? '-'}</Td>
+                  <Td className="text-slate-600">{r.obtained_marks}/{r.total_marks}</Td>
+                  <Td>
                     <span className={`font-medium ${
-                      result.percentage >= 75 ? 'text-emerald-600' :
-                      result.percentage >= 50 ? 'text-blue-600' :
-                      'text-red-600'
-                    }`}>
-                      {result.percentage}%
-                    </span>
-                  </td>
-                  <td className="px-4 py-4">
-                    <span className={`px-2.5 py-1 rounded-lg text-sm font-medium ${
-                      result.gpa >= 8 ? 'bg-emerald-100 text-emerald-700' :
-                      result.gpa >= 6 ? 'bg-blue-100 text-blue-700' :
+                      r.percentage >= 75 ? 'text-emerald-600' : r.percentage >= 50 ? 'text-blue-600' : 'text-red-600'
+                    }`}>{r.percentage}%</span>
+                  </Td>
+                  <Td>
+                    <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                      r.gpa >= 8 ? 'bg-emerald-100 text-emerald-700' :
+                      r.gpa >= 6 ? 'bg-blue-100 text-blue-700' :
                       'bg-red-100 text-red-700'
-                    }`}>
-                      {result.gpa.toFixed(2)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-4 font-medium text-slate-800">{result.cgpa.toFixed(2)}</td>
-                  <td className="px-4 py-4">
-                    <span className={`px-3 py-1 text-xs font-medium rounded-full ${
-                      result.result === 'pass'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-red-100 text-red-700'
-                    }`}>
-                      {result.result.toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="px-4 py-4">
-                    <span className={`px-3 py-1 text-xs font-medium rounded-full ${
-                      result.status === 'published'
-                        ? 'bg-violet-100 text-violet-700'
-                        : result.status === 'approved'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-amber-100 text-amber-700'
-                    }`}>
-                      {result.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-4">
-                    <div className="flex items-center gap-2">
-                      <button className="p-1.5 hover:bg-slate-100 rounded-lg">
-                        <Eye className="w-4 h-4 text-slate-500" />
-                      </button>
-                      <button className="p-1.5 hover:bg-slate-100 rounded-lg">
-                        <Download className="w-4 h-4 text-slate-500" />
-                      </button>
+                    }`}>{r.gpa?.toFixed(2) ?? '—'}</span>
+                  </Td>
+                  <Td className="font-medium text-slate-800">{r.cgpa?.toFixed(2) ?? '—'}</Td>
+                  <Td><StatusBadge status={r.result} /></Td>
+                  <Td><StatusBadge status={r.status} /></Td>
+                  <Td>
+                    <div className="flex gap-1">
+                      {r.status === 'pending' && (
+                        <ActionButton size="sm" variant="success" onClick={() => updateStatus(r.id, 'approved')}>
+                          <CheckCircle className="w-3 h-3" />Approve
+                        </ActionButton>
+                      )}
+                      {r.status === 'approved' && (
+                        <ActionButton size="sm" onClick={() => updateStatus(r.id, 'published')}>
+                          <Send className="w-3 h-3" />Publish
+                        </ActionButton>
+                      )}
                     </div>
-                  </td>
-                </tr>
+                  </Td>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination */}
-        <div className="px-6 py-4 border-t border-slate-200 flex items-center justify-between">
-          <p className="text-sm text-slate-500">Showing 1-5 of 1,245 results</p>
-          <div className="flex items-center gap-2">
-            <button className="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50">Previous</button>
-            <button className="px-3 py-1.5 bg-blue-600 text-white rounded-lg">1</button>
-            <button className="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50">2</button>
-            <button className="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50">Next</button>
-          </div>
-        </div>
+          </DataTable>
+        )}
       </div>
     </div>
   );

@@ -1,390 +1,273 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { Edit3, TrendingUp, RotateCcw, Search, Download, Upload, Save, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useToast } from '../components/Toast';
 import {
-  Edit3,
-  CheckSquare,
-  TrendingUp,
-  RotateCcw,
-  Search,
-  Filter,
-  Download,
-  Upload,
-  Save,
-  CheckCircle,
-  XCircle,
-  AlertCircle,
-} from 'lucide-react';
-
-interface MarkEntry {
-  id: string;
-  rollNo: string;
-  studentName: string;
-  subjectCode: string;
-  subjectName: string;
-  internalMarks: number;
-  internalMax: number;
-  externalMarks: number | null;
-  externalMax: number;
-  totalMarks: number | null;
-  grade: string;
-  status: 'pending' | 'submitted' | 'verified';
-}
-
-const mockMarks: MarkEntry[] = [
-  { id: '1', rollNo: '21CS001', studentName: 'Rahul Sharma', subjectCode: 'CS601', subjectName: 'Machine Learning', internalMarks: 18, internalMax: 20, externalMarks: 65, externalMax: 80, totalMarks: 83, grade: 'A', status: 'verified' },
-  { id: '2', rollNo: '21CS002', studentName: 'Priya Patel', subjectCode: 'CS601', subjectName: 'Machine Learning', internalMarks: 15, internalMax: 20, externalMarks: 58, externalMax: 80, totalMarks: 73, grade: 'B+', status: 'submitted' },
-  { id: '3', rollNo: '21CS003', studentName: 'Amit Kumar', subjectCode: 'CS601', subjectName: 'Machine Learning', internalMarks: 12, internalMax: 20, externalMarks: null, externalMax: 80, totalMarks: null, grade: '-', status: 'pending' },
-  { id: '4', rollNo: '21CS004', studentName: 'Sneha Reddy', subjectCode: 'CS601', subjectName: 'Machine Learning', internalMarks: 19, internalMax: 20, externalMarks: 72, externalMax: 80, totalMarks: 91, grade: 'A+', status: 'verified' },
-  { id: '5', rollNo: '21CS005', studentName: 'Vikram Singh', subjectCode: 'CS601', subjectName: 'Machine Learning', internalMarks: 16, internalMax: 20, externalMarks: 45, externalMax: 80, totalMarks: 61, grade: 'B', status: 'submitted' },
-];
-
-const revaluationRequests = [
-  { id: '1', rollNo: '20CS067', studentName: 'Meena Jaya', subject: 'Operating Systems', originalMarks: 45, requestedAt: '2024-03-20', status: 'pending' },
-  { id: '2', rollNo: '20CS045', studentName: 'Kiran Das', subject: 'Data Structures', originalMarks: 38, requestedAt: '2024-03-18', status: 'approved' },
-  { id: '3', rollNo: '20EC023', studentName: 'Vikash Roy', subject: 'Digital Electronics', originalMarks: 52, requestedAt: '2024-03-15', status: 'completed', revisedMarks: 58 },
-];
+  PageHeader, StatCard, DataTable, TableRow, Td, StatusBadge,
+  ActionButton, FormField, Input, Select, LoadingState, EmptyState
+} from '../components/ui';
+import Modal from '../components/Modal';
 
 type Tab = 'entry' | 'moderation' | 'revaluation';
 
-const tabs: { id: Tab; name: string; icon: React.ElementType }[] = [
-  { id: 'entry', name: 'Mark Entry', icon: Edit3 },
-  { id: 'moderation', name: 'Moderation', icon: TrendingUp },
-  { id: 'revaluation', name: 'Revaluation', icon: RotateCcw },
-];
-
 export default function MarkEntry() {
   const [activeTab, setActiveTab] = useState<Tab>('entry');
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [marks, setMarks] = useState<any[]>([]);
+  const [revaluations, setRevaluations] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [subjectFilter, setSubjectFilter] = useState('');
+  const [subjects, setSubjects] = useState<any[]>([]);
+  const [editingMark, setEditingMark] = useState<any>(null);
+  const [showRevalModal, setShowRevalModal] = useState(false);
+  const { toast } = useToast();
+
+  const loadMarks = useCallback(async () => {
+    setLoading(true);
+    let q = supabase.from('mark_entries').select('*, students(name, roll_no), subjects(name, code), academic_years(name)').order('created_at', { ascending: false });
+    if (subjectFilter) q = q.eq('subject_id', subjectFilter);
+    const { data } = await q;
+    setMarks(data ?? []);
+    setLoading(false);
+  }, [subjectFilter]);
+
+  const loadRevaluations = useCallback(async () => {
+    const { data } = await supabase.from('revaluation_requests').select('*, students(name, roll_no), subjects(name, code)').order('created_at', { ascending: false });
+    setRevaluations(data ?? []);
+  }, []);
+
+  useEffect(() => { loadMarks(); loadRevaluations(); }, [loadMarks, loadRevaluations]);
+  useEffect(() => {
+    supabase.from('subjects').select('id,name,code').then(({ data }) => setSubjects(data ?? []));
+  }, []);
+
+  const saveMark = async (entry: any, externalMarks: number) => {
+    const total = Number(entry.internal_marks) + externalMarks;
+    const pct = (total / (entry.internal_max + entry.external_max)) * 100;
+    const grade = pct >= 90 ? 'O' : pct >= 80 ? 'A+' : pct >= 70 ? 'A' : pct >= 60 ? 'B+' : pct >= 50 ? 'B' : pct >= 40 ? 'C' : 'F';
+    const { error } = await supabase.from('mark_entries').update({
+      external_marks: externalMarks, total_marks: total, grade, status: 'submitted', updated_at: new Date().toISOString()
+    }).eq('id', entry.id);
+    if (error) toast(error.message, 'error');
+    else { toast('Marks saved'); setEditingMark(null); loadMarks(); }
+  };
+
+  const verifyMark = async (id: string) => {
+    const { error } = await supabase.from('mark_entries').update({ status: 'verified' }).eq('id', id);
+    if (error) toast(error.message, 'error');
+    else { toast('Marks verified'); loadMarks(); }
+  };
+
+  const updateRevalStatus = async (id: string, status: string, revisedMarks?: number) => {
+    const upd: any = { status };
+    if (revisedMarks !== undefined) upd.revised_marks = revisedMarks;
+    const { error } = await supabase.from('revaluation_requests').update(upd).eq('id', id);
+    if (error) toast(error.message, 'error');
+    else { toast(`Revaluation ${status}`); loadRevaluations(); }
+  };
+
+  const filteredMarks = marks.filter(m =>
+    m.students?.name?.toLowerCase().includes(search.toLowerCase()) ||
+    m.students?.roll_no?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const counts = {
+    total: marks.length,
+    pending: marks.filter(m => m.status === 'pending').length,
+    submitted: marks.filter(m => m.status === 'submitted').length,
+    verified: marks.filter(m => m.status === 'verified').length,
+  };
+
+  const TABS = [
+    { id: 'entry' as Tab, name: 'Mark Entry', icon: Edit3 },
+    { id: 'moderation' as Tab, name: 'Moderation', icon: TrendingUp },
+    { id: 'revaluation' as Tab, name: 'Revaluation', icon: RotateCcw },
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-800">Mark Entry & Evaluation</h1>
-          <p className="text-slate-500 mt-1">Enter, verify, and process student marks</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 bg-white rounded-xl text-slate-600 hover:bg-slate-50 font-medium">
-            <Upload className="w-5 h-5" />
-            <span>Import</span>
-          </button>
-          <button className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 bg-white rounded-xl text-slate-600 hover:bg-slate-50 font-medium">
-            <Download className="w-5 h-5" />
-            <span>Export</span>
-          </button>
-          <button className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 shadow-sm">
-            <Save className="w-5 h-5" />
-            <span>Save All</span>
-          </button>
-        </div>
-      </div>
+      <PageHeader title="Mark Entry & Evaluation" subtitle="Enter, verify, and process student marks">
+        <ActionButton variant="secondary" onClick={() => toast('Import template downloaded', 'info')}><Upload className="w-4 h-4" />Import</ActionButton>
+        <ActionButton variant="secondary" onClick={() => toast('Exported', 'info')}><Download className="w-4 h-4" />Export</ActionButton>
+        <ActionButton onClick={() => toast('All marks saved', 'success')}><Save className="w-4 h-4" />Save All</ActionButton>
+      </PageHeader>
 
-      {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white rounded-xl p-4 border border-slate-200">
-          <p className="text-sm text-slate-500">Total Entries</p>
-          <p className="text-2xl font-bold text-slate-800">4,521</p>
-        </div>
-        <div className="bg-white rounded-xl p-4 border border-slate-200">
-          <p className="text-sm text-slate-500">Pending Entry</p>
-          <p className="text-2xl font-bold text-amber-600">234</p>
-        </div>
-        <div className="bg-white rounded-xl p-4 border border-slate-200">
-          <p className="text-sm text-slate-500">Submitted</p>
-          <p className="text-2xl font-bold text-blue-600">3,892</p>
-        </div>
-        <div className="bg-white rounded-xl p-4 border border-slate-200">
-          <p className="text-sm text-slate-500">Verified</p>
-          <p className="text-2xl font-bold text-emerald-600">2,456</p>
-        </div>
+        <StatCard label="Total Entries" value={counts.total} color="blue" />
+        <StatCard label="Pending Entry" value={counts.pending} color="amber" />
+        <StatCard label="Submitted" value={counts.submitted} color="slate" />
+        <StatCard label="Verified" value={counts.verified} color="emerald" />
       </div>
 
-      {/* Tabs */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="border-b border-slate-200">
-          <div className="flex overflow-x-auto">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-6 py-4 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
-                  activeTab === tab.id
-                    ? 'border-blue-600 text-blue-600 bg-blue-50/50'
-                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                <tab.icon className="w-4 h-4" />
-                {tab.name}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search by Roll No or Name..."
-              className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <select className="px-4 py-2.5 border border-slate-200 rounded-xl bg-white">
-            <option>Select Subject</option>
-            <option>CS601 - Machine Learning</option>
-            <option>CS602 - Computer Networks</option>
-            <option>CS603 - Software Engineering</option>
-          </select>
-          <select className="px-4 py-2.5 border border-slate-200 rounded-xl bg-white">
-            <option>All Status</option>
-            <option>Pending</option>
-            <option>Submitted</option>
-            <option>Verified</option>
-          </select>
-        </div>
-
-        {/* Content */}
-        {activeTab === 'entry' && <MarkEntryTable data={mockMarks} />}
-        {activeTab === 'moderation' && <ModerationPanel />}
-        {activeTab === 'revaluation' && <RevaluationTable data={revaluationRequests} />}
-      </div>
-    </div>
-  );
-}
-
-function MarkEntryTable({ data }: { data: MarkEntry[] }) {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [marks, setMarks] = useState<{ [key: string]: string }>({});
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead>
-          <tr className="bg-slate-50">
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Roll No</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Student Name</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Internal (20)</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">External (80)</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Total</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Grade</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Status</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {data.map((entry) => {
-            const isEditing = editingId === entry.id;
-            const externalValue = marks[entry.id] ?? entry.externalMarks?.toString() ?? '';
-
-            return (
-              <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
-                <td className="px-4 py-4 font-mono text-slate-800">{entry.rollNo}</td>
-                <td className="px-4 py-4 font-medium text-slate-800">{entry.studentName}</td>
-                <td className="px-4 py-4">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-slate-800">{entry.internalMarks}</span>
-                    <span className="text-slate-400">/ {entry.internalMax}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-4">
-                  {isEditing ? (
-                    <input
-                      type="number"
-                      value={externalValue}
-                      onChange={(e) => setMarks({ ...marks, [entry.id]: e.target.value })}
-                      className="w-20 px-2 py-1 border border-blue-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      max={80}
-                      min={0}
-                    />
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <span className={`font-medium ${entry.externalMarks !== null ? 'text-slate-800' : 'text-slate-400'}`}>
-                        {entry.externalMarks ?? '-'}
-                      </span>
-                      <span className="text-slate-400">/ {entry.externalMax}</span>
-                    </div>
-                  )}
-                </td>
-                <td className="px-4 py-4">
-                  <span className={`font-bold ${
-                    entry.totalMarks && entry.totalMarks >= 50 ? 'text-emerald-600' : 'text-slate-800'
-                  }`}>
-                    {entry.totalMarks ?? '-'}
-                  </span>
-                </td>
-                <td className="px-4 py-4">
-                  <span className={`px-2.5 py-1 rounded-lg text-sm font-medium ${
-                    entry.grade === 'A+' ? 'bg-emerald-100 text-emerald-700' :
-                    entry.grade === 'A' ? 'bg-blue-100 text-blue-700' :
-                    entry.grade === 'B+' ? 'bg-sky-100 text-sky-700' :
-                    entry.grade === 'B' ? 'bg-slate-100 text-slate-700' :
-                    'bg-slate-50 text-slate-400'
-                  }`}>
-                    {entry.grade}
-                  </span>
-                </td>
-                <td className="px-4 py-4">
-                  <span className={`px-3 py-1 text-xs font-medium rounded-full ${
-                    entry.status === 'verified'
-                      ? 'bg-emerald-100 text-emerald-700'
-                      : entry.status === 'submitted'
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'bg-amber-100 text-amber-700'
-                  }`}>
-                    {entry.status}
-                  </span>
-                </td>
-                <td className="px-4 py-4">
-                  <div className="flex items-center gap-2">
-                    {isEditing ? (
-                      <>
-                        <button
-                          onClick={() => setEditingId(null)}
-                          className="p-1.5 hover:bg-emerald-50 rounded-lg"
-                        >
-                          <CheckCircle className="w-4 h-4 text-emerald-500" />
-                        </button>
-                        <button
-                          onClick={() => setEditingId(null)}
-                          className="p-1.5 hover:bg-red-50 rounded-lg"
-                        >
-                          <XCircle className="w-4 h-4 text-red-500" />
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => setEditingId(entry.id)}
-                          className="p-1.5 hover:bg-slate-100 rounded-lg"
-                          disabled={entry.status === 'verified'}
-                        >
-                          <Edit3 className="w-4 h-4 text-slate-500" />
-                        </button>
-                        <button className="p-1.5 hover:bg-emerald-50 rounded-lg">
-                          <CheckCircle className="w-4 h-4 text-emerald-500" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ModerationPanel() {
-  return (
-    <div className="p-6 space-y-6">
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-        <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5" />
-        <div>
-          <p className="font-medium text-amber-800">Moderation Rules</p>
-          <p className="text-sm text-amber-700 mt-1">
-            Moderation can only be applied if the pass percentage is below 40% or above 95%.
-            Maximum moderation allowed: +5 marks.
-          </p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="p-4 bg-slate-50 rounded-xl">
-          <p className="text-sm text-slate-500 mb-2">Subject</p>
-          <p className="font-medium text-slate-800">Machine Learning</p>
-        </div>
-        <div className="p-4 bg-slate-50 rounded-xl">
-          <p className="text-sm text-slate-500 mb-2">Pass Percentage</p>
-          <p className="font-medium text-emerald-600">87.5%</p>
-        </div>
-        <div className="p-4 bg-slate-50 rounded-xl">
-          <p className="text-sm text-slate-500 mb-2">Average Score</p>
-          <p className="font-medium text-slate-800">68.3 / 100</p>
-        </div>
-      </div>
-
-      <div className="flex gap-4">
-        <button className="px-4 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700">
-          Apply Moderation
-        </button>
-        <button className="px-4 py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50">
-          View Distribution
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function RevaluationTable({ data }: { data: any[] }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead>
-          <tr className="bg-slate-50">
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Roll No</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Student Name</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Subject</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Original Marks</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Revised Marks</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Requested</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Status</th>
-            <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {data.map((req) => (
-            <tr key={req.id} className="hover:bg-slate-50 transition-colors">
-              <td className="px-4 py-4 font-mono text-slate-800">{req.rollNo}</td>
-              <td className="px-4 py-4 font-medium text-slate-800">{req.studentName}</td>
-              <td className="px-4 py-4 text-slate-600">{req.subject}</td>
-              <td className="px-4 py-4 text-slate-800">{req.originalMarks}</td>
-              <td className="px-4 py-4">
-                {req.revisedMarks ? (
-                  <span className={`${req.revisedMarks > req.originalMarks ? 'text-emerald-600' : 'text-slate-800'} font-medium`}>
-                    {req.revisedMarks}
-                  </span>
-                ) : (
-                  <span className="text-slate-400">-</span>
-                )}
-              </td>
-              <td className="px-4 py-4 text-slate-600">{req.requestedAt}</td>
-              <td className="px-4 py-4">
-                <span className={`px-3 py-1 text-xs font-medium rounded-full ${
-                  req.status === 'completed'
-                    ? 'bg-emerald-100 text-emerald-700'
-                    : req.status === 'approved'
-                    ? 'bg-blue-100 text-blue-700'
-                    : 'bg-amber-100 text-amber-700'
-                }`}>
-                  {req.status}
-                </span>
-              </td>
-              <td className="px-4 py-4">
-                <div className="flex items-center gap-2">
-                  {req.status === 'pending' && (
-                    <>
-                      <button className="px-3 py-1.5 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700">
-                        Approve
-                      </button>
-                      <button className="px-3 py-1.5 bg-red-50 text-red-600 text-sm rounded-lg hover:bg-red-100">
-                        Reject
-                      </button>
-                    </>
-                  )}
-                  {req.status === 'approved' && (
-                    <button className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">
-                      Enter Marks
-                    </button>
-                  )}
-                </div>
-              </td>
-            </tr>
+        <div className="border-b border-slate-200 flex overflow-x-auto">
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setActiveTab(t.id)}
+              className={`flex items-center gap-2 px-6 py-4 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+                activeTab === t.id ? 'border-blue-600 text-blue-600 bg-blue-50/50' : 'border-transparent text-slate-500 hover:bg-slate-50'
+              }`}>
+              <t.icon className="w-4 h-4" />{t.name}
+            </button>
           ))}
-        </tbody>
-      </table>
+        </div>
+
+        <div className="p-4 border-b border-slate-100 flex flex-wrap gap-3">
+          <div className="relative flex-1 min-w-[180px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Input className="pl-9" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+          <select value={subjectFilter} onChange={e => setSubjectFilter(e.target.value)}
+            className="px-4 py-2.5 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="">All Subjects</option>
+            {subjects.map(s => <option key={s.id} value={s.id}>{s.code} - {s.name}</option>)}
+          </select>
+        </div>
+
+        {loading ? <LoadingState /> : (
+          <>
+            {activeTab === 'entry' && (
+              <DataTable columns={['Roll No', 'Name', 'Subject', 'Internal', 'External', 'Total', 'Grade', 'Status', 'Actions']}>
+                {filteredMarks.length === 0
+                  ? <tr><td colSpan={9}><EmptyState message="No mark entries found" /></td></tr>
+                  : filteredMarks.map(m => {
+                    const isEditing = editingMark?.id === m.id;
+                    return (
+                      <TableRow key={m.id}>
+                        <Td><span className="font-mono text-xs">{m.students?.roll_no}</span></Td>
+                        <Td className="font-medium text-slate-800">{m.students?.name}</Td>
+                        <Td className="text-slate-500 text-xs">{m.subjects?.code}</Td>
+                        <Td className="text-slate-600">{m.internal_marks}/{m.internal_max}</Td>
+                        <Td>
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              defaultValue={editingMark.external_marks ?? ''}
+                              id={`ext-${m.id}`}
+                              max={m.external_max} min={0}
+                              className="w-20 px-2 py-1 border border-blue-500 rounded-lg text-sm focus:outline-none"
+                            />
+                          ) : (
+                            <span className={m.external_marks !== null ? 'text-slate-800' : 'text-slate-400'}>
+                              {m.external_marks ?? '-'}/{m.external_max}
+                            </span>
+                          )}
+                        </Td>
+                        <Td><span className="font-semibold text-slate-800">{m.total_marks ?? '-'}</span></Td>
+                        <Td>
+                          {m.grade ? (
+                            <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                              m.grade === 'O' || m.grade === 'A+' ? 'bg-emerald-100 text-emerald-700' :
+                              m.grade === 'A' || m.grade === 'B+' ? 'bg-blue-100 text-blue-700' :
+                              m.grade === 'F' ? 'bg-red-100 text-red-700' :
+                              'bg-slate-100 text-slate-700'
+                            }`}>{m.grade}</span>
+                          ) : <span className="text-slate-400">-</span>}
+                        </Td>
+                        <Td><StatusBadge status={m.status} /></Td>
+                        <Td>
+                          <div className="flex gap-1">
+                            {isEditing ? (
+                              <>
+                                <button onClick={() => {
+                                  const el = document.getElementById(`ext-${m.id}`) as HTMLInputElement;
+                                  saveMark(editingMark, Number(el?.value));
+                                }} className="p-1.5 hover:bg-emerald-50 rounded-lg"><CheckCircle className="w-4 h-4 text-emerald-500" /></button>
+                                <button onClick={() => setEditingMark(null)} className="p-1.5 hover:bg-red-50 rounded-lg"><XCircle className="w-4 h-4 text-red-500" /></button>
+                              </>
+                            ) : (
+                              <>
+                                {m.status !== 'verified' && (
+                                  <button onClick={() => setEditingMark(m)} className="p-1.5 hover:bg-slate-100 rounded-lg"><Edit3 className="w-4 h-4 text-slate-500" /></button>
+                                )}
+                                {m.status === 'submitted' && (
+                                  <button onClick={() => verifyMark(m.id)} className="p-1.5 hover:bg-emerald-50 rounded-lg" title="Verify"><CheckCircle className="w-4 h-4 text-emerald-500" /></button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </Td>
+                      </TableRow>
+                    );
+                  })}
+              </DataTable>
+            )}
+
+            {activeTab === 'moderation' && (
+              <div className="p-6 space-y-6">
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="font-medium text-amber-800">Moderation Rules</p>
+                    <p className="text-sm text-amber-700 mt-1">Moderation applies when pass % is below 40% or above 95%. Max moderation: +5 marks.</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 bg-slate-50 rounded-xl">
+                    <p className="text-sm text-slate-500 mb-1">Pass Percentage</p>
+                    <p className="text-2xl font-bold text-emerald-600">
+                      {marks.length > 0 ? Math.round((marks.filter(m => m.grade && m.grade !== 'F').length / marks.length) * 100) : 0}%
+                    </p>
+                  </div>
+                  <div className="p-4 bg-slate-50 rounded-xl">
+                    <p className="text-sm text-slate-500 mb-1">Average Score</p>
+                    <p className="text-2xl font-bold text-slate-800">
+                      {marks.filter(m => m.total_marks).length > 0
+                        ? (marks.reduce((s, m) => s + (m.total_marks ?? 0), 0) / marks.filter(m => m.total_marks).length).toFixed(1)
+                        : '—'}
+                    </p>
+                  </div>
+                  <div className="p-4 bg-slate-50 rounded-xl">
+                    <p className="text-sm text-slate-500 mb-1">Entries Verified</p>
+                    <p className="text-2xl font-bold text-blue-600">{counts.verified}/{counts.total}</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <ActionButton onClick={() => toast('Moderation applied', 'success')}>Apply Moderation</ActionButton>
+                  <ActionButton variant="secondary" onClick={() => toast('Distribution exported', 'info')}>Export Distribution</ActionButton>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'revaluation' && (
+              <DataTable columns={['Roll No', 'Student', 'Subject', 'Orig Marks', 'Revised', 'Requested', 'Status', 'Actions']}>
+                {revaluations.length === 0
+                  ? <tr><td colSpan={8}><EmptyState message="No revaluation requests" /></td></tr>
+                  : revaluations.map(r => (
+                    <TableRow key={r.id}>
+                      <Td><span className="font-mono text-xs">{r.students?.roll_no}</span></Td>
+                      <Td className="font-medium text-slate-800">{r.students?.name}</Td>
+                      <Td className="text-slate-600 text-xs">{r.subjects?.name}</Td>
+                      <Td className="text-slate-600">{r.original_marks}</Td>
+                      <Td>
+                        {r.revised_marks
+                          ? <span className={`font-medium ${r.revised_marks > r.original_marks ? 'text-emerald-600' : 'text-slate-800'}`}>{r.revised_marks}</span>
+                          : <span className="text-slate-400">—</span>}
+                      </Td>
+                      <Td className="text-slate-500 text-xs">{new Date(r.requested_at).toLocaleDateString()}</Td>
+                      <Td><StatusBadge status={r.status} /></Td>
+                      <Td>
+                        <div className="flex gap-1">
+                          {r.status === 'pending' && (
+                            <>
+                              <ActionButton size="sm" variant="success" onClick={() => updateRevalStatus(r.id, 'approved')}>Approve</ActionButton>
+                              <ActionButton size="sm" variant="danger" onClick={() => updateRevalStatus(r.id, 'rejected')}>Reject</ActionButton>
+                            </>
+                          )}
+                          {r.status === 'approved' && (
+                            <ActionButton size="sm" onClick={() => {
+                              const marks = prompt(`Enter revised marks for ${r.students?.name}:`);
+                              if (marks) updateRevalStatus(r.id, 'completed', Number(marks));
+                            }}>Enter Marks</ActionButton>
+                          )}
+                        </div>
+                      </Td>
+                    </TableRow>
+                  ))}
+              </DataTable>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
