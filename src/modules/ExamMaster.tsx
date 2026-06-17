@@ -23,10 +23,12 @@ export default function ExamMaster() {
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editItem, setEditItem] = useState<any>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const openCreate = () => { setEditItem(null); setShowModal(true); };
   const openEdit = (item: any) => { setEditItem(item); setShowModal(true); };
   const closeModal = () => { setShowModal(false); setEditItem(null); };
+  const handleSaved = () => { closeModal(); setRefreshKey(k => k + 1); };
 
   return (
     <div className="space-y-6">
@@ -58,20 +60,20 @@ export default function ExamMaster() {
           </div>
         </div>
 
-        {activeTab === 'academic-year' && <AcademicYears search={search} onEdit={openEdit} />}
-        {activeTab === 'semester' && <Semesters search={search} onEdit={openEdit} />}
-        {activeTab === 'exam-types' && <ExamTypes search={search} onEdit={openEdit} />}
-        {activeTab === 'subject-mapping' && <Subjects search={search} onEdit={openEdit} />}
-        {activeTab === 'program-mapping' && <Programs search={search} onEdit={openEdit} />}
+        {activeTab === 'academic-year' && <AcademicYears search={search} onEdit={openEdit} refreshKey={refreshKey} />}
+        {activeTab === 'semester' && <Semesters search={search} onEdit={openEdit} refreshKey={refreshKey} />}
+        {activeTab === 'exam-types' && <ExamTypes search={search} onEdit={openEdit} refreshKey={refreshKey} />}
+        {activeTab === 'subject-mapping' && <Subjects search={search} onEdit={openEdit} refreshKey={refreshKey} />}
+        {activeTab === 'program-mapping' && <Programs search={search} onEdit={openEdit} refreshKey={refreshKey} />}
       </div>
 
       {showModal && (
         <Modal title={`${editItem ? 'Edit' : 'Add'} ${TABS.find(t => t.id === activeTab)?.name}`} onClose={closeModal}>
-          {activeTab === 'academic-year' && <AcademicYearForm item={editItem} onClose={closeModal} />}
-          {activeTab === 'semester' && <SemesterForm item={editItem} onClose={closeModal} />}
-          {activeTab === 'exam-types' && <ExamTypeForm item={editItem} onClose={closeModal} />}
-          {activeTab === 'subject-mapping' && <SubjectForm item={editItem} onClose={closeModal} />}
-          {activeTab === 'program-mapping' && <ProgramForm item={editItem} onClose={closeModal} />}
+          {activeTab === 'academic-year' && <AcademicYearForm item={editItem} onClose={handleSaved} />}
+          {activeTab === 'semester' && <SemesterForm item={editItem} onClose={handleSaved} />}
+          {activeTab === 'exam-types' && <ExamTypeForm item={editItem} onClose={handleSaved} />}
+          {activeTab === 'subject-mapping' && <SubjectForm item={editItem} onClose={handleSaved} />}
+          {activeTab === 'program-mapping' && <ProgramForm item={editItem} onClose={handleSaved} />}
         </Modal>
       )}
     </div>
@@ -79,7 +81,7 @@ export default function ExamMaster() {
 }
 
 // ─── Academic Years ───────────────────────────────────────────
-function AcademicYears({ search, onEdit }: { search: string; onEdit: (item: any) => void }) {
+function AcademicYears({ search, onEdit, refreshKey }: { search: string; onEdit: (item: any) => void; refreshKey: number }) {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -93,7 +95,7 @@ function AcademicYears({ search, onEdit }: { search: string; onEdit: (item: any)
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   const del = async (id: string) => {
     if (!confirm('Delete this academic year?')) return;
@@ -161,7 +163,7 @@ function AcademicYearForm({ item, onClose }: { item: any; onClose: () => void })
 }
 
 // ─── Semesters ────────────────────────────────────────────────
-function Semesters({ search, onEdit }: { search: string; onEdit: (item: any) => void }) {
+function Semesters({ search, onEdit, refreshKey }: { search: string; onEdit: (item: any) => void; refreshKey: number }) {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
@@ -173,7 +175,7 @@ function Semesters({ search, onEdit }: { search: string; onEdit: (item: any) => 
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   const del = async (id: string) => {
     if (!confirm('Delete this semester?')) return;
@@ -252,7 +254,7 @@ function SemesterForm({ item, onClose }: { item: any; onClose: () => void }) {
 }
 
 // ─── Exam Types ───────────────────────────────────────────────
-function ExamTypes({ search, onEdit }: { search: string; onEdit: (item: any) => void }) {
+function ExamTypes({ search, onEdit, refreshKey }: { search: string; onEdit: (item: any) => void; refreshKey: number }) {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
@@ -264,7 +266,7 @@ function ExamTypes({ search, onEdit }: { search: string; onEdit: (item: any) => 
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   const del = async (id: string) => {
     if (!confirm('Delete this exam type?')) return;
@@ -334,7 +336,7 @@ function ExamTypeForm({ item, onClose }: { item: any; onClose: () => void }) {
 }
 
 // ─── Subjects ─────────────────────────────────────────────────
-function Subjects({ search, onEdit }: { search: string; onEdit: (item: any) => void }) {
+function Subjects({ search, onEdit, refreshKey }: { search: string; onEdit: (item: any) => void; refreshKey: number }) {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
@@ -346,7 +348,7 @@ function Subjects({ search, onEdit }: { search: string; onEdit: (item: any) => v
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   const del = async (id: string) => {
     if (!confirm('Delete this subject?')) return;
@@ -441,7 +443,7 @@ function SubjectForm({ item, onClose }: { item: any; onClose: () => void }) {
 }
 
 // ─── Programs ─────────────────────────────────────────────────
-function Programs({ search, onEdit }: { search: string; onEdit: (item: any) => void }) {
+function Programs({ search, onEdit, refreshKey }: { search: string; onEdit: (item: any) => void; refreshKey: number }) {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
@@ -453,7 +455,7 @@ function Programs({ search, onEdit }: { search: string; onEdit: (item: any) => v
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, refreshKey]);
 
   const del = async (id: string) => {
     if (!confirm('Delete this program?')) return;
