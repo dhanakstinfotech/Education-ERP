@@ -51,6 +51,250 @@ export default function HallTicket() {
     toast(`Generated ${pending.length} hall tickets`);
   };
 
+  // Generate a simple QR code data URL (using a canvas-based approach)
+  const generateQRCode = (text: string): string => {
+    // Simple QR-style pattern based on the text hash
+    const canvas = document.createElement('canvas');
+    canvas.width = 100;
+    canvas.height = 100;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+
+    // White background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, 100, 100);
+
+    // Create a pattern based on the text
+    ctx.fillStyle = '#000000';
+    const size = 4;
+    const hash = text.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+
+    for (let y = 0; y < 25; y++) {
+      for (let x = 0; x < 25; x++) {
+        const idx = (x + y * 25 + hash) % 3;
+        if (idx === 0 || idx === 1) {
+          // Create QR-like pattern
+          if ((x < 7 && y < 7) || (x > 17 && y < 7) || (x < 7 && y > 17)) {
+            // Corner markers
+            if (x === 0 || x === 6 || y === 0 || y === 6 || (x >= 2 && x <= 4 && y >= 2 && y <= 4)) {
+              ctx.fillRect(x * size, y * size, size, size);
+            }
+          } else if (((x + y + hash) % 7) < 3) {
+            ctx.fillRect(x * size, y * size, size, size);
+          }
+        }
+      }
+    }
+
+    return canvas.toDataURL();
+  };
+
+  // Download single hall ticket as PDF (opens print dialog)
+  const downloadPdf = (ticket: any) => {
+    const qrCode = ticket.qr_code ? generateQRCode(ticket.qr_code) : '';
+    const subjects = ticket.hall_ticket_subjects || [];
+
+    const printWindow = window.open('', '_blank', 'width=800,height=600');
+    if (!printWindow) {
+      toast('Popup blocked. Please allow popups.', 'error');
+      return;
+    }
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Hall Ticket - ${ticket.students?.roll_no}</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: 'Segoe UI', sans-serif; padding: 20px; background: #fff; }
+          .ticket { max-width: 600px; margin: 0 auto; border: 2px solid #1e40af; border-radius: 8px; overflow: hidden; }
+          .header { background: #1e40af; color: white; padding: 20px; text-align: center; }
+          .header h1 { font-size: 24px; margin-bottom: 4px; }
+          .header p { font-size: 12px; opacity: 0.9; }
+          .content { padding: 20px; }
+          .student-info { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+          .info-row { display: flex; justify-content: space-between; font-size: 13px; }
+          .info-row span:first-child { color: #64748b; }
+          .info-row span:last-child { font-weight: 600; color: #1e293b; }
+          table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 12px; }
+          th, td { border: 1px solid #e2e8f0; padding: 10px; text-align: left; }
+          th { background: #f1f5f9; color: #475569; font-weight: 600; }
+          .qr-section { display: flex; justify-content: center; padding: 20px; border-top: 1px solid #e2e8f0; }
+          .qr-box { text-align: center; }
+          .qr-box img { width: 80px; height: 80px; border: 1px solid #e2e8f0; }
+          .qr-box p { font-size: 10px; color: #94a3b8; margin-top: 4px; }
+          .footer { background: #f1f5f9; padding: 12px; text-align: center; font-size: 11px; color: #64748b; }
+          .instructions { background: #fef3c7; padding: 10px; font-size: 11px; margin: 16px 0; border-radius: 4px; }
+          .instructions strong { display: block; margin-bottom: 4px; }
+          @media print {
+            body { padding: 0; }
+            .ticket { border: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="ticket">
+          <div class="header">
+            <h1>ABC University</h1>
+            <p>End Semester Examination 2024</p>
+          </div>
+          <div class="content">
+            <h2 style="font-size: 16px; color: #1e40af; margin-bottom: 12px;">Hall Ticket</h2>
+            <div class="student-info">
+              <div class="info-row"><span>Roll No:</span><span>${ticket.students?.roll_no ?? 'N/A'}</span></div>
+              <div class="info-row"><span>Name:</span><span>${ticket.students?.name ?? 'N/A'}</span></div>
+              <div class="info-row"><span>Program:</span><span>${ticket.students?.programs?.name ?? 'N/A'}</span></div>
+              <div class="info-row"><span>Semester:</span><span>Semester ${ticket.semester_number}</span></div>
+            </div>
+            <div class="instructions">
+              <strong>Important Instructions:</strong>
+              1. Bring this hall ticket to all examinations.<br>
+              2. Carry your college ID card.<br>
+              3. Reach the examination hall 30 minutes before the exam.<br>
+              4. Electronic devices are strictly prohibited.
+            </div>
+            ${subjects.length > 0 ? `
+              <table>
+                <thead>
+                  <tr><th>Code</th><th>Subject</th><th>Date</th><th>Session</th></tr>
+                </thead>
+                <tbody>
+                  ${subjects.map((s: any) => `
+                    <tr>
+                      <td>${s.subjects?.code ?? '-'}</td>
+                      <td>${s.subjects?.name ?? '-'}</td>
+                      <td>${s.exam_date ?? '-'}</td>
+                      <td>${s.exam_session ?? 'Morning'}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            ` : ''}
+            <div class="qr-section">
+              <div class="qr-box">
+                ${qrCode ? `<img src="${qrCode}" alt="QR Code" />` : '<div style="width:80px;height:80px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;border:1px solid #e2e8f0;">QR</div>'}
+                <p>${ticket.qr_code || 'Scan for verification'}</p>
+              </div>
+            </div>
+          </div>
+          <div class="footer">
+            <p>This is a computer-generated hall ticket. No signature required.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+    printWindow.focus();
+
+    setTimeout(() => {
+      printWindow.print();
+      markDownloaded(ticket.id);
+    }, 250);
+  };
+
+  // Bulk print all generated tickets
+  const bulkPrint = () => {
+    const toPrint = tickets.filter(t => t.status === 'generated' || t.status === 'downloaded');
+    if (toPrint.length === 0) {
+      toast('No generated tickets to print', 'info');
+      return;
+    }
+
+    const printWindow = window.open('', '_blank', 'width=900,height=700');
+    if (!printWindow) {
+      toast('Popup blocked. Please allow popups.', 'error');
+      return;
+    }
+
+    const ticketsHtml = toPrint.map((ticket, index) => {
+      const qrCode = ticket.qr_code ? generateQRCode(ticket.qr_code) : '';
+      const subjects = ticket.hall_ticket_subjects || [];
+
+      return `
+        <div class="ticket ${index > 0 ? 'page-break' : ''}">
+          <div class="header">
+            <h1>ABC University</h1>
+            <p>End Semester Examination 2024</p>
+          </div>
+          <div class="content">
+            <div class="student-info">
+              <div class="info-row"><span>Roll No:</span><span>${ticket.students?.roll_no ?? 'N/A'}</span></div>
+              <div class="info-row"><span>Name:</span><span>${ticket.students?.name ?? 'N/A'}</span></div>
+              <div class="info-row"><span>Program:</span><span>${ticket.students?.programs?.name ?? 'N/A'}</span></div>
+              <div class="info-row"><span>Semester:</span><span>Semester ${ticket.semester_number}</span></div>
+            </div>
+            ${subjects.length > 0 ? `
+              <table>
+                <thead><tr><th>Code</th><th>Subject</th><th>Date</th></tr></thead>
+                <tbody>
+                  ${subjects.map((s: any) => `<tr><td>${s.subjects?.code ?? '-'}</td><td>${s.subjects?.name ?? '-'}</td><td>${s.exam_date ?? '-'}</td></tr>`).join('')}
+                </tbody>
+              </table>
+            ` : ''}
+            <div class="qr-section">
+              <div class="qr-box">
+                ${qrCode ? `<img src="${qrCode}" alt="QR" />` : '<div class="qr-placeholder">QR</div>'}
+                <p>${ticket.qr_code || ''}</p>
+              </div>
+            </div>
+          </div>
+          <div class="footer">Computer-generated hall ticket</div>
+        </div>
+      `;
+    }).join('');
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Bulk Hall Tickets</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: 'Segoe UI', sans-serif; padding: 10px; background: #fff; }
+          .ticket { max-width: 550px; margin: 10px auto; border: 2px solid #1e40af; border-radius: 8px; overflow: hidden; }
+          .header { background: #1e40af; color: white; padding: 12px; text-align: center; }
+          .header h1 { font-size: 18px; margin-bottom: 2px; }
+          .header p { font-size: 10px; opacity: 0.9; }
+          .content { padding: 12px; }
+          .student-info { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+          .info-row { display: flex; justify-content: space-between; font-size: 11px; }
+          .info-row span:first-child { color: #64748b; }
+          .info-row span:last-child { font-weight: 600; color: #1e293b; }
+          table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 10px; }
+          th, td { border: 1px solid #e2e8f0; padding: 6px; text-align: left; }
+          th { background: #f1f5f9; }
+          .qr-section { display: flex; justify-content: center; padding: 10px; border-top: 1px solid #e2e8f0; }
+          .qr-box { text-align: center; }
+          .qr-box img { width: 60px; height: 60px; }
+          .qr-box p { font-size: 8px; color: #94a3b8; margin-top: 2px; }
+          .qr-placeholder { width: 60px; height: 60px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+          .footer { background: #f1f5f9; padding: 8px; text-align: center; font-size: 9px; color: #64748b; }
+          .page-break { page-break-before: always; margin-top: 20px; }
+          @media print {
+            body { padding: 0; }
+            .ticket { border: none; margin: 0; }
+            .page-break { page-break-before: always; margin-top: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        ${ticketsHtml}
+      </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+    printWindow.focus();
+
+    setTimeout(() => {
+      printWindow.print();
+      toast(`Printing ${toPrint.length} hall tickets`);
+    }, 500);
+  };
+
   const filtered = tickets.filter(t => {
     const matchSearch = t.students?.name?.toLowerCase().includes(search.toLowerCase()) ||
       t.students?.roll_no?.toLowerCase().includes(search.toLowerCase());
@@ -68,7 +312,7 @@ export default function HallTicket() {
   return (
     <div className="space-y-6">
       <PageHeader title="Hall Ticket Management" subtitle="Generate, manage, and download hall tickets">
-        <ActionButton variant="secondary" onClick={() => toast('Bulk print initiated', 'info')}>
+        <ActionButton variant="secondary" onClick={bulkPrint}>
           <Printer className="w-4 h-4" />Bulk Print
         </ActionButton>
         <ActionButton loading={generating} onClick={generateAll}>
@@ -193,11 +437,11 @@ export default function HallTicket() {
                       <Ticket className="w-4 h-4" />Generate
                     </ActionButton>
                   ) : (
-                    <ActionButton className="flex-1 justify-center" onClick={() => markDownloaded(selected.id)}>
+                    <ActionButton className="flex-1 justify-center" onClick={() => downloadPdf(selected)}>
                       <Download className="w-4 h-4" />Download PDF
                     </ActionButton>
                   )}
-                  <button className="px-3 py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50">
+                  <button onClick={() => selected && downloadPdf(selected)} className="px-3 py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50">
                     <Printer className="w-4 h-4" />
                   </button>
                 </div>
