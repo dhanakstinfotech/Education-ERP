@@ -4,7 +4,10 @@ import { supabase } from '../lib/supabase';
 import { LoadingState } from './ui';
 
 export default function Dashboard() {
-  const [stats, setStats] = useState({ students: 0, registrations: 0, hallTickets: 0, results: 0, passRate: 0 });
+  const [stats, setStats] = useState({
+    students: 0, registrations: 0, hallTickets: 0, results: 0, passRate: 0,
+    eligibilityApproved: 0, eligibilityPending: 0, eligibilityRejected: 0,
+  });
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
   const [upcomingExams, setUpcomingExams] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -12,17 +15,23 @@ export default function Dashboard() {
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
-      const [stuRes, regRes, htRes, resRes, markRes, qpRes] = await Promise.all([
-        supabase.from('students').select('id, status').eq('status', 'active'),
+      const [stuRes, regRes, htRes, resRes, markRes, qpRes, eligRes] = await Promise.all([
+        supabase.from('students').select('id, status'),
         supabase.from('registrations').select('id, status, created_at, students(name)').order('created_at', { ascending: false }).limit(5),
         supabase.from('hall_tickets').select('id, status').neq('status', 'pending'),
         supabase.from('results').select('id, result, created_at'),
         supabase.from('mark_entries').select('id, status'),
         supabase.from('question_papers').select('id, exam_date, subjects(name, code), status').eq('status', 'finalized').order('exam_date').limit(5),
+        supabase.from('students').select('id, eligibility_status'),
       ]);
 
       const passCount = (resRes.data ?? []).filter(r => r.result === 'pass').length;
       const passRate = resRes.data?.length ? Math.round((passCount / resRes.data.length) * 100) : 0;
+
+      // Eligibility counts
+      const eligibilityApproved = (eligRes.data ?? []).filter(s => s.eligibility_status === 'approved').length;
+      const eligibilityPending = (eligRes.data ?? []).filter(s => s.eligibility_status === 'pending').length;
+      const eligibilityRejected = (eligRes.data ?? []).filter(s => s.eligibility_status === 'rejected').length;
 
       setStats({
         students: stuRes.data?.length ?? 0,
@@ -30,6 +39,9 @@ export default function Dashboard() {
         hallTickets: htRes.data?.length ?? 0,
         results: resRes.data?.length ?? 0,
         passRate,
+        eligibilityApproved,
+        eligibilityPending,
+        eligibilityRejected,
       });
 
       // Build recent activities from registrations + mark entries
@@ -103,7 +115,7 @@ export default function Dashboard() {
       </div>
 
       {/* Main Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Recent Activities */}
         <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm">
           <div className="p-5 border-b border-slate-100">
@@ -163,6 +175,42 @@ export default function Dashboard() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Eligibility Breakdown */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm">
+          <div className="p-5 border-b border-slate-100"><h2 className="text-lg font-semibold text-slate-800">Eligibility Status</h2></div>
+          <div className="p-5">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
+                  <span className="text-sm text-slate-600">Approved</span>
+                </div>
+                <span className="text-lg font-bold text-emerald-600">{stats.eligibilityApproved}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full bg-amber-500"></div>
+                  <span className="text-sm text-slate-600">Pending</span>
+                </div>
+                <span className="text-lg font-bold text-amber-600">{stats.eligibilityPending}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                  <span className="text-sm text-slate-600">Rejected</span>
+                </div>
+                <span className="text-lg font-bold text-red-600">{stats.eligibilityRejected}</span>
+              </div>
+            </div>
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500">Total Students</span>
+                <span className="font-semibold text-slate-800">{stats.students}</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
