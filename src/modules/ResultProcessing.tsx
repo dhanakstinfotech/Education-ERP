@@ -42,23 +42,28 @@ export default function ResultProcessing() {
 
   const calculateGPA = async () => {
     setCalculating(true);
-    // For each result, compute GPA from mark_entries
-    const { data: marks } = await supabase.from('mark_entries').select('student_id, total_marks, internal_max, external_max, subjects(credits)');
-    if (!marks?.length) { toast('No mark entries found', 'error'); setCalculating(false); return; }
+    // Fetch mark entries with academic_year_id
+    const { data: marks } = await supabase.from('mark_entries')
+      .select('student_id, academic_year_id, total_marks, internal_max, external_max, subjects(credits), status')
+      .not('total_marks', 'is', null);
+    if (!marks?.length) { toast('No mark entries with totals found', 'error'); setCalculating(false); return; }
 
     const byStudent: Record<string, any[]> = {};
     marks.forEach(m => {
-      if (!byStudent[m.student_id]) byStudent[m.student_id] = [];
-      byStudent[m.student_id].push(m);
+      const key = `${m.student_id}_${m.academic_year_id || 'default'}`;
+      if (!byStudent[key]) byStudent[key] = [];
+      byStudent[key].push(m);
     });
 
-    for (const [studentId, entries] of Object.entries(byStudent)) {
-      const totalCredits = entries.reduce((s, e) => s + (e.subjects?.credits ?? 3), 0);
+    let processed = 0;
+    for (const [key, entries] of Object.entries(byStudent)) {
+      const [studentId] = key.split('_');
+      const totalCredits = entries.reduce((s, e) => s + ((e.subjects as any)?.credits ?? 3), 0);
       const creditPoints = entries.reduce((s, e) => {
         const maxMarks = (e.internal_max ?? 20) + (e.external_max ?? 80);
         const pct = ((e.total_marks ?? 0) / maxMarks) * 100;
         const gradeEntry = GRADE_SCALE.find(g => pct >= g.min) ?? GRADE_SCALE[GRADE_SCALE.length - 1];
-        return s + gradeEntry.points * (e.subjects?.credits ?? 3);
+        return s + gradeEntry.points * ((e.subjects as any)?.credits ?? 3);
       }, 0);
       const gpa = totalCredits > 0 ? creditPoints / totalCredits : 0;
       const totalObtained = entries.reduce((s, e) => s + (e.total_marks ?? 0), 0);
@@ -70,9 +75,11 @@ export default function ResultProcessing() {
         return p < 40;
       });
 
-      await supabase.from('results').upsert({
+      const academicYearId = entries[0]?.academic_year_id || 'a1000000-0000-0000-0000-000000000001';
+
+      const { error } = await supabase.from('results').upsert({
         student_id: studentId,
-        academic_year_id: entries[0]?.academic_year_id ?? null,
+        academic_year_id: academicYearId,
         semester_number: 6,
         total_marks: totalMax,
         obtained_marks: totalObtained,
@@ -81,9 +88,11 @@ export default function ResultProcessing() {
         cgpa: Math.round(gpa * 100) / 100,
         result: hasFail ? 'fail' : 'pass',
         status: 'pending',
+        created_at: new Date().toISOString(),
       }, { onConflict: 'student_id, academic_year_id, semester_number' });
+      if (!error) processed++;
     }
-    toast('GPA calculated for all students');
+    toast(`GPA calculated for ${processed} students`);
     load();
     setCalculating(false);
   };

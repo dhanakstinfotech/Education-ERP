@@ -78,6 +78,96 @@ export default function MarkEntry() {
     verified: marks.filter(m => m.status === 'verified').length,
   };
 
+  // Export marks to CSV
+  const exportMarks = () => {
+    const data = filteredMarks.map(m => ({
+      'Roll No': m.students?.roll_no ?? '',
+      'Name': m.students?.name ?? '',
+      'Subject': m.subjects?.code ?? '',
+      'Internal': m.internal_marks ?? '',
+      'Internal Max': m.internal_max ?? 20,
+      'External': m.external_marks ?? '',
+      'External Max': m.external_max ?? 80,
+      'Total': m.total_marks ?? '',
+      'Grade': m.grade ?? '',
+      'Status': m.status ?? '',
+    }));
+    if (!data.length) { toast('No data to export', 'info'); return; }
+    const csv = [
+      Object.keys(data[0]).join(','),
+      ...data.map(row => Object.values(row).join(','))
+    ].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `marks-export-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Marks exported successfully');
+  };
+
+  // Import template download
+  const downloadImportTemplate = () => {
+    const headers = ['student_id', 'subject_id', 'internal_marks', 'external_marks'];
+    const csv = headers.join(',') + '\n';
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'marks-import-template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Import template downloaded');
+  };
+
+  // Save all pending marks (mark as submitted if external marks exist)
+  const saveAllMarks = async () => {
+    const pendingWithMarks = marks.filter(m => m.status === 'pending' && m.external_marks !== null && m.external_marks !== undefined);
+    if (!pendingWithMarks.length) { toast('No pending marks with values to save', 'info'); return; }
+
+    let saved = 0;
+    for (const entry of pendingWithMarks) {
+      const total = Number(entry.internal_marks) + Number(entry.external_marks);
+      const pct = (total / (entry.internal_max + entry.external_max)) * 100;
+      const grade = pct >= 90 ? 'O' : pct >= 80 ? 'A+' : pct >= 70 ? 'A' : pct >= 60 ? 'B+' : pct >= 50 ? 'B' : pct >= 40 ? 'C' : 'F';
+      const { error } = await supabase.from('mark_entries').update({
+        total_marks: total, grade, status: 'submitted', updated_at: new Date().toISOString()
+      }).eq('id', entry.id);
+      if (!error) saved++;
+    }
+    toast(`Saved ${saved} mark entries`);
+    loadMarks();
+  };
+
+  // Apply moderation (add up to 5 grace marks for borderline cases)
+  const applyModeration = async () => {
+    const borderline = filteredMarks.filter(m => {
+      if (!m.total_marks) return false;
+      const pct = (m.total_marks / (m.internal_max + m.external_max)) * 100;
+      return pct >= 35 && pct < 40;
+    });
+    if (!borderline.length) { toast('No students qualify for moderation', 'info'); return; }
+
+    let moderated = 0;
+    for (const m of borderline) {
+      const currentTotal = m.total_marks;
+      const maxTotal = m.internal_max + m.external_max;
+      const neededForPass = Math.ceil(maxTotal * 0.4);
+      const grace = Math.min(5, neededForPass - currentTotal);
+      if (grace <= 0) continue;
+      const newTotal = currentTotal + grace;
+      const pct = (newTotal / maxTotal) * 100;
+      const grade = pct >= 40 ? 'C' : 'F';
+      const { error } = await supabase.from('mark_entries').update({
+        total_marks: newTotal, grade, moderated: true, status: 'submitted'
+      }).eq('id', m.id);
+      if (!error) moderated++;
+    }
+    toast(`Moderation applied to ${moderated} students`);
+    loadMarks();
+  };
+
   const TABS = [
     { id: 'entry' as Tab, name: 'Mark Entry', icon: Edit3 },
     { id: 'moderation' as Tab, name: 'Moderation', icon: TrendingUp },
@@ -87,9 +177,9 @@ export default function MarkEntry() {
   return (
     <div className="space-y-6">
       <PageHeader title="Mark Entry & Evaluation" subtitle="Enter, verify, and process student marks">
-        <ActionButton variant="secondary" onClick={() => toast('Import template downloaded', 'info')}><Upload className="w-4 h-4" />Import</ActionButton>
-        <ActionButton variant="secondary" onClick={() => toast('Exported', 'info')}><Download className="w-4 h-4" />Export</ActionButton>
-        <ActionButton onClick={() => toast('All marks saved', 'success')}><Save className="w-4 h-4" />Save All</ActionButton>
+        <ActionButton variant="secondary" onClick={downloadImportTemplate}><Upload className="w-4 h-4" />Import Template</ActionButton>
+        <ActionButton variant="secondary" onClick={exportMarks}><Download className="w-4 h-4" />Export</ActionButton>
+        <ActionButton onClick={saveAllMarks}><Save className="w-4 h-4" />Save All</ActionButton>
       </PageHeader>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -222,8 +312,8 @@ export default function MarkEntry() {
                   </div>
                 </div>
                 <div className="flex gap-3">
-                  <ActionButton onClick={() => toast('Moderation applied', 'success')}>Apply Moderation</ActionButton>
-                  <ActionButton variant="secondary" onClick={() => toast('Distribution exported', 'info')}>Export Distribution</ActionButton>
+                  <ActionButton onClick={applyModeration}>Apply Moderation</ActionButton>
+                  <ActionButton variant="secondary" onClick={exportMarks}>Export Distribution</ActionButton>
                 </div>
               </div>
             )}

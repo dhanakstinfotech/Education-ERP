@@ -59,6 +59,33 @@ export default function StudentEligibility() {
     s.name.toLowerCase().includes(search.toLowerCase()) || s.roll_no.toLowerCase().includes(search.toLowerCase())
   );
 
+  // Export students to CSV
+  const exportStudents = () => {
+    const data = filtered.map(s => ({
+      'Roll No': s.roll_no,
+      'Name': s.name,
+      'Program': s.programs?.name ?? '',
+      'Semester': s.current_semester,
+      'Attendance %': s.attendance_pct,
+      'Fee Due': s.fee_due,
+      'Internal Marks %': s.internal_marks_pct,
+      'Eligibility': s.eligibility_status,
+    }));
+    if (!data.length) { toast('No data to export', 'info'); return; }
+    const csv = [
+      Object.keys(data[0]).join(','),
+      ...data.map(row => Object.values(row).join(','))
+    ].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `students-eligibility-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Students exported');
+  };
+
   const approved = students.filter(s => s.eligibility_status === 'approved').length;
   const pending = students.filter(s => s.eligibility_status === 'pending').length;
   const rejected = students.filter(s => s.eligibility_status === 'rejected').length;
@@ -82,7 +109,7 @@ export default function StudentEligibility() {
   return (
     <div className="space-y-6">
       <PageHeader title="Student Eligibility" subtitle="Verify attendance, fee clearance, and internal marks">
-        <ActionButton variant="secondary" onClick={() => toast('Exported', 'info')}><Download className="w-4 h-4" />Export</ActionButton>
+        <ActionButton variant="secondary" onClick={exportStudents}><Download className="w-4 h-4" />Export</ActionButton>
         <ActionButton onClick={bulkApprove}><CheckCircle className="w-4 h-4" />Bulk Approve ({selected.length})</ActionButton>
       </PageHeader>
 

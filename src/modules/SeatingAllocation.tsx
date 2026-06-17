@@ -45,23 +45,70 @@ export default function SeatingAllocation() {
   };
 
   const autoAllocate = async () => {
-    toast('Auto allocation started', 'info');
-    // Fetch eligible students and rooms
-    const { data: students } = await supabase.from('students').select('id').eq('eligibility_status', 'approved').limit(20);
-    const { data: rms } = await supabase.from('exam_rooms').select('id').eq('status', 'available').limit(3);
+    // Fetch approved students without existing allocations
+    const { data: allocatedStudentIds } = await supabase.from('seat_allocations').select('student_id');
+    const allocatedSet = new Set((allocatedStudentIds ?? []).map(a => a.student_id));
+
+    const { data: students } = await supabase.from('students').select('id, name, roll_no').eq('eligibility_status', 'approved');
+    const unallocated = (students ?? []).filter(s => !allocatedSet.has(s.id)).slice(0, 30);
+
+    // Use all rooms (not just available)
+    const { data: rms } = await supabase.from('exam_rooms').select('id, name, capacity').order('capacity', { ascending: false });
     const { data: subj } = await supabase.from('subjects').select('id').limit(1);
-    if (!students?.length || !rms?.length || !subj?.length) { toast('Not enough data to allocate', 'error'); return; }
-    const inserts = students.map((s, i) => ({
-      student_id: s.id,
-      room_id: rms[i % rms.length].id,
-      subject_id: subj[0].id,
-      seat_number: `A${i + 1}`,
-      exam_date: '2024-04-15',
-      exam_session: 'morning',
-    }));
-    const { error } = await supabase.from('seat_allocations').upsert(inserts);
+
+    if (!unallocated.length) { toast('All eligible students already have seats', 'info'); return; }
+    if (!rms?.length) { toast('No rooms available', 'error'); return; }
+    if (!subj?.length) { toast('No subjects found', 'error'); return; }
+
+    const inserts: any[] = [];
+    let seatCounter = 1;
+    const seatLabels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+
+    for (const student of unallocated) {
+      const roomIdx = Math.min(Math.floor((seatCounter - 1) / 20), rms.length - 1);
+      const room = rms[roomIdx];
+      const seatInRoom = ((seatCounter - 1) % 20) + 1;
+      const rowLabel = seatLabels[Math.floor((seatInRoom - 1) / 5)];
+      const colNum = ((seatInRoom - 1) % 5) + 1;
+
+      inserts.push({
+        student_id: student.id,
+        room_id: room.id,
+        subject_id: subj[0].id,
+        seat_number: `${rowLabel}${colNum}`,
+        exam_date: '2024-04-15',
+        exam_session: seatCounter % 2 === 0 ? 'afternoon' : 'morning',
+      });
+      seatCounter++;
+    }
+
+    const { error } = await supabase.from('seat_allocations').insert(inserts);
     if (error) toast(error.message, 'error');
-    else { toast('Seats allocated successfully'); loadAllocations(); }
+    else { toast(`Allocated ${inserts.length} seats successfully`); loadAllocations(); }
+  };
+
+  const exportChart = () => {
+    const data = allocations.map(a => ({
+      Student: a.students?.name,
+      'Roll No': a.students?.roll_no,
+      Room: a.exam_rooms?.name,
+      Seat: a.seat_number,
+      Subject: a.subjects?.name,
+      Date: a.exam_date,
+      Session: a.exam_session,
+    }));
+    const csv = [
+      Object.keys(data[0] || {}).join(','),
+      ...data.map(row => Object.values(row).join(','))
+    ].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `seating-chart-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Seating chart exported');
   };
 
   const totalCapacity = rooms.reduce((s, r) => s + r.capacity, 0);
@@ -70,7 +117,7 @@ export default function SeatingAllocation() {
   return (
     <div className="space-y-6">
       <PageHeader title="Seating & Hall Allocation" subtitle="Manage exam rooms and seating arrangements">
-        <ActionButton variant="secondary" onClick={() => toast('Chart exported', 'info')}><Download className="w-4 h-4" />Export Chart</ActionButton>
+        <ActionButton variant="secondary" onClick={exportChart}><Download className="w-4 h-4" />Export Chart</ActionButton>
         <ActionButton onClick={autoAllocate}><Settings className="w-4 h-4" />Auto Allocate</ActionButton>
       </PageHeader>
 

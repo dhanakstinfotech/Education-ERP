@@ -72,10 +72,37 @@ export default function ExamRegistration() {
     r.students?.roll_no?.toLowerCase().includes(search.toLowerCase())
   );
 
+  // Export registrations to CSV
+  const exportRegistrations = () => {
+    const data = filteredRegs.map(r => ({
+      'Roll No': r.students?.roll_no ?? '',
+      'Name': r.students?.name ?? '',
+      'Academic Year': r.academic_years?.name ?? '',
+      'Semester': r.semester_number,
+      'Exam Type': r.exam_types?.name ?? '',
+      'Fee Amount': r.fee_amount,
+      'Fee Status': r.fee_status,
+      'Status': r.status,
+    }));
+    if (!data.length) { toast('No data to export', 'info'); return; }
+    const csv = [
+      Object.keys(data[0]).join(','),
+      ...data.map(row => Object.values(row).join(','))
+    ].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `exam-registrations-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Registrations exported');
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader title="Exam Registration" subtitle="Manage student registrations, arrears, and fee collection">
-        <ActionButton variant="secondary" onClick={() => toast('Exported', 'info')}><Download className="w-4 h-4" />Export</ActionButton>
+        <ActionButton variant="secondary" onClick={exportRegistrations}><Download className="w-4 h-4" />Export</ActionButton>
         <ActionButton onClick={() => setShowModal(true)}><Plus className="w-4 h-4" />New Registration</ActionButton>
       </PageHeader>
 
