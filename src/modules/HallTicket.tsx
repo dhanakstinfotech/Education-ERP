@@ -37,10 +37,13 @@ export default function HallTicket() {
     else { toast('Hall ticket generated'); load(); }
   };
 
-  const markDownloaded = async (ticketId: string) => {
+  const markDownloaded = async (ticketId: string, silent = false) => {
     const { error } = await supabase.from('hall_tickets').update({ status: 'downloaded' }).eq('id', ticketId);
     if (error) toast(error.message, 'error');
-    else { toast('Marked as downloaded'); load(); }
+    else {
+      if (!silent) toast('Marked as downloaded');
+      load();
+    }
   };
 
   const generateAll = async () => {
@@ -89,139 +92,21 @@ export default function HallTicket() {
     return canvas.toDataURL();
   };
 
-  // Download single hall ticket as PDF (opens print dialog)
-  const downloadPdf = (ticket: any) => {
+  const buildTicketHtml = (ticket: any, compact = false) => {
     const qrCode = ticket.qr_code ? generateQRCode(ticket.qr_code) : '';
     const subjects = ticket.hall_ticket_subjects || [];
+    const rollNo = ticket.students?.roll_no ?? 'N/A';
 
-    const printWindow = window.open('', '_blank', 'width=800,height=600');
-    if (!printWindow) {
-      toast('Popup blocked. Please allow popups.', 'error');
-      return;
-    }
-
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Hall Ticket - ${ticket.students?.roll_no}</title>
-        <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: 'Segoe UI', sans-serif; padding: 20px; background: #fff; }
-          .ticket { max-width: 600px; margin: 0 auto; border: 2px solid #1e40af; border-radius: 8px; overflow: hidden; }
-          .header { background: #1e40af; color: white; padding: 20px; text-align: center; }
-          .header h1 { font-size: 24px; margin-bottom: 4px; }
-          .header p { font-size: 12px; opacity: 0.9; }
-          .content { padding: 20px; }
-          .student-info { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-          .info-row { display: flex; justify-content: space-between; font-size: 13px; }
-          .info-row span:first-child { color: #64748b; }
-          .info-row span:last-child { font-weight: 600; color: #1e293b; }
-          table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 12px; }
-          th, td { border: 1px solid #e2e8f0; padding: 10px; text-align: left; }
-          th { background: #f1f5f9; color: #475569; font-weight: 600; }
-          .qr-section { display: flex; justify-content: center; padding: 20px; border-top: 1px solid #e2e8f0; }
-          .qr-box { text-align: center; }
-          .qr-box img { width: 80px; height: 80px; border: 1px solid #e2e8f0; }
-          .qr-box p { font-size: 10px; color: #94a3b8; margin-top: 4px; }
-          .footer { background: #f1f5f9; padding: 12px; text-align: center; font-size: 11px; color: #64748b; }
-          .instructions { background: #fef3c7; padding: 10px; font-size: 11px; margin: 16px 0; border-radius: 4px; }
-          .instructions strong { display: block; margin-bottom: 4px; }
-          @media print {
-            body { padding: 0; }
-            .ticket { border: none; }
-          }
-        </style>
-      </head>
-      <body>
+    if (compact) {
+      return `
         <div class="ticket">
           <div class="header">
             <h1>ABC University</h1>
             <p>End Semester Examination 2024</p>
           </div>
           <div class="content">
-            <h2 style="font-size: 16px; color: #1e40af; margin-bottom: 12px;">Hall Ticket</h2>
             <div class="student-info">
-              <div class="info-row"><span>Roll No:</span><span>${ticket.students?.roll_no ?? 'N/A'}</span></div>
-              <div class="info-row"><span>Name:</span><span>${ticket.students?.name ?? 'N/A'}</span></div>
-              <div class="info-row"><span>Program:</span><span>${ticket.students?.programs?.name ?? 'N/A'}</span></div>
-              <div class="info-row"><span>Semester:</span><span>Semester ${ticket.semester_number}</span></div>
-            </div>
-            <div class="instructions">
-              <strong>Important Instructions:</strong>
-              1. Bring this hall ticket to all examinations.<br>
-              2. Carry your college ID card.<br>
-              3. Reach the examination hall 30 minutes before the exam.<br>
-              4. Electronic devices are strictly prohibited.
-            </div>
-            ${subjects.length > 0 ? `
-              <table>
-                <thead>
-                  <tr><th>Code</th><th>Subject</th><th>Date</th><th>Session</th></tr>
-                </thead>
-                <tbody>
-                  ${subjects.map((s: any) => `
-                    <tr>
-                      <td>${s.subjects?.code ?? '-'}</td>
-                      <td>${s.subjects?.name ?? '-'}</td>
-                      <td>${s.exam_date ?? '-'}</td>
-                      <td>${s.exam_session ?? 'Morning'}</td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            ` : ''}
-            <div class="qr-section">
-              <div class="qr-box">
-                ${qrCode ? `<img src="${qrCode}" alt="QR Code" />` : '<div style="width:80px;height:80px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;border:1px solid #e2e8f0;">QR</div>'}
-                <p>${ticket.qr_code || 'Scan for verification'}</p>
-              </div>
-            </div>
-          </div>
-          <div class="footer">
-            <p>This is a computer-generated hall ticket. No signature required.</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `);
-
-    printWindow.document.close();
-    printWindow.focus();
-
-    setTimeout(() => {
-      printWindow.print();
-      markDownloaded(ticket.id);
-    }, 250);
-  };
-
-  // Bulk print all generated tickets
-  const bulkPrint = () => {
-    const toPrint = tickets.filter(t => t.status === 'generated' || t.status === 'downloaded');
-    if (toPrint.length === 0) {
-      toast('No generated tickets to print', 'info');
-      return;
-    }
-
-    const printWindow = window.open('', '_blank', 'width=900,height=700');
-    if (!printWindow) {
-      toast('Popup blocked. Please allow popups.', 'error');
-      return;
-    }
-
-    const ticketsHtml = toPrint.map((ticket, index) => {
-      const qrCode = ticket.qr_code ? generateQRCode(ticket.qr_code) : '';
-      const subjects = ticket.hall_ticket_subjects || [];
-
-      return `
-        <div class="ticket ${index > 0 ? 'page-break' : ''}">
-          <div class="header">
-            <h1>ABC University</h1>
-            <p>End Semester Examination 2024</p>
-          </div>
-          <div class="content">
-            <div class="student-info">
-              <div class="info-row"><span>Roll No:</span><span>${ticket.students?.roll_no ?? 'N/A'}</span></div>
+              <div class="info-row"><span>Roll No:</span><span>${rollNo}</span></div>
               <div class="info-row"><span>Name:</span><span>${ticket.students?.name ?? 'N/A'}</span></div>
               <div class="info-row"><span>Program:</span><span>${ticket.students?.programs?.name ?? 'N/A'}</span></div>
               <div class="info-row"><span>Semester:</span><span>Semester ${ticket.semester_number}</span></div>
@@ -244,55 +129,224 @@ export default function HallTicket() {
           <div class="footer">Computer-generated hall ticket</div>
         </div>
       `;
-    }).join('');
+    }
 
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Bulk Hall Tickets</title>
-        <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: 'Segoe UI', sans-serif; padding: 10px; background: #fff; }
-          .ticket { max-width: 550px; margin: 10px auto; border: 2px solid #1e40af; border-radius: 8px; overflow: hidden; }
-          .header { background: #1e40af; color: white; padding: 12px; text-align: center; }
-          .header h1 { font-size: 18px; margin-bottom: 2px; }
-          .header p { font-size: 10px; opacity: 0.9; }
-          .content { padding: 12px; }
-          .student-info { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
-          .info-row { display: flex; justify-content: space-between; font-size: 11px; }
-          .info-row span:first-child { color: #64748b; }
-          .info-row span:last-child { font-weight: 600; color: #1e293b; }
-          table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 10px; }
-          th, td { border: 1px solid #e2e8f0; padding: 6px; text-align: left; }
-          th { background: #f1f5f9; }
-          .qr-section { display: flex; justify-content: center; padding: 10px; border-top: 1px solid #e2e8f0; }
-          .qr-box { text-align: center; }
-          .qr-box img { width: 60px; height: 60px; }
-          .qr-box p { font-size: 8px; color: #94a3b8; margin-top: 2px; }
-          .qr-placeholder { width: 60px; height: 60px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; font-size: 10px; }
-          .footer { background: #f1f5f9; padding: 8px; text-align: center; font-size: 9px; color: #64748b; }
-          .page-break { page-break-before: always; margin-top: 20px; }
-          @media print {
-            body { padding: 0; }
-            .ticket { border: none; margin: 0; }
-            .page-break { page-break-before: always; margin-top: 0; }
-          }
-        </style>
-      </head>
-      <body>
-        ${ticketsHtml}
-      </body>
-      </html>
-    `);
+    return `
+      <div class="ticket">
+        <div class="header">
+          <h1>ABC University</h1>
+          <p>End Semester Examination 2024</p>
+        </div>
+        <div class="content">
+          <h2 style="font-size: 16px; color: #1e40af; margin-bottom: 12px;">Hall Ticket</h2>
+          <div class="student-info">
+            <div class="info-row"><span>Roll No:</span><span>${rollNo}</span></div>
+            <div class="info-row"><span>Name:</span><span>${ticket.students?.name ?? 'N/A'}</span></div>
+            <div class="info-row"><span>Program:</span><span>${ticket.students?.programs?.name ?? 'N/A'}</span></div>
+            <div class="info-row"><span>Semester:</span><span>Semester ${ticket.semester_number}</span></div>
+          </div>
+          <div class="instructions">
+            <strong>Important Instructions:</strong>
+            1. Bring this hall ticket to all examinations.<br>
+            2. Carry your college ID card.<br>
+            3. Reach the examination hall 30 minutes before the exam.<br>
+            4. Electronic devices are strictly prohibited.
+          </div>
+          ${subjects.length > 0 ? `
+            <table>
+              <thead>
+                <tr><th>Code</th><th>Subject</th><th>Date</th><th>Session</th></tr>
+              </thead>
+              <tbody>
+                ${subjects.map((s: any) => `
+                  <tr>
+                    <td>${s.subjects?.code ?? '-'}</td>
+                    <td>${s.subjects?.name ?? '-'}</td>
+                    <td>${s.exam_date ?? '-'}</td>
+                    <td>${s.exam_session ?? 'Morning'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          ` : ''}
+          <div class="qr-section">
+            <div class="qr-box">
+              ${qrCode ? `<img src="${qrCode}" alt="QR Code" />` : '<div style="width:80px;height:80px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;border:1px solid #e2e8f0;">QR</div>'}
+              <p>${ticket.qr_code || 'Scan for verification'}</p>
+            </div>
+          </div>
+        </div>
+        <div class="footer">
+          <p>This is a computer-generated hall ticket. No signature required.</p>
+        </div>
+      </div>
+    `;
+  };
 
-    printWindow.document.close();
-    printWindow.focus();
+  const ticketDocument = (ticket: any, compact = false) => {
+    const rollNo = ticket.students?.roll_no ?? ticket.id;
+    const styles = compact ? `
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: 'Segoe UI', sans-serif; padding: 10px; background: #fff; }
+      .ticket { max-width: 550px; margin: 10px auto; border: 2px solid #1e40af; border-radius: 8px; overflow: hidden; }
+      .header { background: #1e40af; color: white; padding: 12px; text-align: center; }
+      .header h1 { font-size: 18px; margin-bottom: 2px; }
+      .header p { font-size: 10px; opacity: 0.9; }
+      .content { padding: 12px; }
+      .student-info { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+      .info-row { display: flex; justify-content: space-between; font-size: 11px; }
+      .info-row span:first-child { color: #64748b; }
+      .info-row span:last-child { font-weight: 600; color: #1e293b; }
+      table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 10px; }
+      th, td { border: 1px solid #e2e8f0; padding: 6px; text-align: left; }
+      th { background: #f1f5f9; }
+      .qr-section { display: flex; justify-content: center; padding: 10px; border-top: 1px solid #e2e8f0; }
+      .qr-box { text-align: center; }
+      .qr-box img { width: 60px; height: 60px; }
+      .qr-box p { font-size: 8px; color: #94a3b8; margin-top: 2px; }
+      .qr-placeholder { width: 60px; height: 60px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+      .footer { background: #f1f5f9; padding: 8px; text-align: center; font-size: 9px; color: #64748b; }
+      .page-break { page-break-before: always; margin-top: 20px; }
+      @media print { body { padding: 0; } .ticket { border: none; margin: 0; } .page-break { page-break-before: always; margin-top: 0; } }
+    ` : `
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: 'Segoe UI', sans-serif; padding: 20px; background: #fff; }
+      .ticket { max-width: 600px; margin: 0 auto; border: 2px solid #1e40af; border-radius: 8px; overflow: hidden; }
+      .header { background: #1e40af; color: white; padding: 20px; text-align: center; }
+      .header h1 { font-size: 24px; margin-bottom: 4px; }
+      .header p { font-size: 12px; opacity: 0.9; }
+      .content { padding: 20px; }
+      .student-info { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+      .info-row { display: flex; justify-content: space-between; font-size: 13px; }
+      .info-row span:first-child { color: #64748b; }
+      .info-row span:last-child { font-weight: 600; color: #1e293b; }
+      table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 12px; }
+      th, td { border: 1px solid #e2e8f0; padding: 10px; text-align: left; }
+      th { background: #f1f5f9; color: #475569; font-weight: 600; }
+      .qr-section { display: flex; justify-content: center; padding: 20px; border-top: 1px solid #e2e8f0; }
+      .qr-box { text-align: center; }
+      .qr-box img { width: 80px; height: 80px; border: 1px solid #e2e8f0; }
+      .qr-box p { font-size: 10px; color: #94a3b8; margin-top: 4px; }
+      .footer { background: #f1f5f9; padding: 12px; text-align: center; font-size: 11px; color: #64748b; }
+      .instructions { background: #fef3c7; padding: 10px; font-size: 11px; margin: 16px 0; border-radius: 4px; }
+      .instructions strong { display: block; margin-bottom: 4px; }
+      @media print { body { padding: 0; } .ticket { border: none; } }
+    `;
 
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Hall Ticket - ${rollNo}</title>
+  <style>${styles}</style>
+</head>
+<body>${buildTicketHtml(ticket, compact)}</body>
+</html>`;
+  };
+
+  const openTicketInFrame = (html: string, onReady: (win: Window) => void) => {
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+    document.body.appendChild(iframe);
+    const win = iframe.contentWindow;
+    if (!win) {
+      document.body.removeChild(iframe);
+      toast('Unable to open hall ticket', 'error');
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
     setTimeout(() => {
-      printWindow.print();
+      onReady(win);
+      setTimeout(() => document.body.removeChild(iframe), 1000);
+    }, 300);
+  };
+
+  const downloadTicket = (ticket: any) => {
+    if (ticket.status === 'pending') {
+      toast('Generate the hall ticket before downloading', 'info');
+      return;
+    }
+
+    const rollNo = ticket.students?.roll_no ?? ticket.id;
+    const html = ticketDocument(ticket);
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `hall-ticket-${rollNo}.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    markDownloaded(ticket.id, true);
+    toast('Hall ticket downloaded');
+  };
+
+  const printTicket = (ticket: any) => {
+    if (ticket.status === 'pending') {
+      toast('Generate the hall ticket before printing', 'info');
+      return;
+    }
+
+    openTicketInFrame(ticketDocument(ticket), win => {
+      win.focus();
+      win.print();
+    });
+  };
+
+  // Bulk print all generated tickets
+  const bulkPrint = () => {
+    const toPrint = tickets.filter(t => t.status === 'generated' || t.status === 'downloaded');
+    if (toPrint.length === 0) {
+      toast('No generated tickets to print', 'info');
+      return;
+    }
+
+    const body = toPrint.map((ticket, index) =>
+      `${index > 0 ? '<div class="page-break"></div>' : ''}${buildTicketHtml(ticket, true)}`
+    ).join('');
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bulk Hall Tickets</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; padding: 10px; background: #fff; }
+    .ticket { max-width: 550px; margin: 10px auto; border: 2px solid #1e40af; border-radius: 8px; overflow: hidden; }
+    .header { background: #1e40af; color: white; padding: 12px; text-align: center; }
+    .header h1 { font-size: 18px; margin-bottom: 2px; }
+    .header p { font-size: 10px; opacity: 0.9; }
+    .content { padding: 12px; }
+    .student-info { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+    .info-row { display: flex; justify-content: space-between; font-size: 11px; }
+    .info-row span:first-child { color: #64748b; }
+    .info-row span:last-child { font-weight: 600; color: #1e293b; }
+    table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 10px; }
+    th, td { border: 1px solid #e2e8f0; padding: 6px; text-align: left; }
+    th { background: #f1f5f9; }
+    .qr-section { display: flex; justify-content: center; padding: 10px; border-top: 1px solid #e2e8f0; }
+    .qr-box { text-align: center; }
+    .qr-box img { width: 60px; height: 60px; }
+    .qr-box p { font-size: 8px; color: #94a3b8; margin-top: 2px; }
+    .qr-placeholder { width: 60px; height: 60px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; font-size: 10px; }
+    .footer { background: #f1f5f9; padding: 8px; text-align: center; font-size: 9px; color: #64748b; }
+    .page-break { page-break-before: always; margin-top: 20px; }
+    @media print { body { padding: 0; } .ticket { border: none; margin: 0; } .page-break { page-break-before: always; margin-top: 0; } }
+  </style>
+</head>
+<body>${body}</body>
+</html>`;
+
+    openTicketInFrame(html, win => {
+      win.focus();
+      win.print();
       toast(`Printing ${toPrint.length} hall tickets`);
-    }, 500);
+    });
   };
 
   const filtered = tickets.filter(t => {
@@ -370,7 +424,13 @@ export default function HallTicket() {
                           <button onClick={e => { e.stopPropagation(); generate(t.id); }} className="p-1.5 hover:bg-blue-50 rounded-lg"><Ticket className="w-4 h-4 text-blue-500" /></button>
                         )}
                         {t.status !== 'pending' && (
-                          <button onClick={e => { e.stopPropagation(); markDownloaded(t.id); }} className="p-1.5 hover:bg-emerald-50 rounded-lg"><Download className="w-4 h-4 text-emerald-500" /></button>
+                          <button
+                            onClick={e => { e.stopPropagation(); downloadTicket(t); }}
+                            className="p-1.5 hover:bg-emerald-50 rounded-lg"
+                            title="Download hall ticket"
+                          >
+                            <Download className="w-4 h-4 text-emerald-500" />
+                          </button>
                         )}
                       </div>
                     </Td>
@@ -437,11 +497,15 @@ export default function HallTicket() {
                       <Ticket className="w-4 h-4" />Generate
                     </ActionButton>
                   ) : (
-                    <ActionButton className="flex-1 justify-center" onClick={() => downloadPdf(selected)}>
+                    <ActionButton className="flex-1 justify-center" onClick={() => downloadTicket(selected)}>
                       <Download className="w-4 h-4" />Download PDF
                     </ActionButton>
                   )}
-                  <button onClick={() => selected && downloadPdf(selected)} className="px-3 py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50">
+                  <button
+                    onClick={() => printTicket(selected)}
+                    className="px-3 py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50"
+                    title="Print hall ticket"
+                  >
                     <Printer className="w-4 h-4" />
                   </button>
                 </div>

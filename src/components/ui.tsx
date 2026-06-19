@@ -53,7 +53,7 @@ export function FormField({ label, required, children, error }: FormFieldProps) 
   );
 }
 
-interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {}
+interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> { }
 export function Input({ className = '', ...props }: InputProps) {
   return (
     <input
@@ -109,7 +109,10 @@ export function StatusBadge({ status, variant = 'default' }: StatusBadgeProps) {
     completed: 'bg-emerald-100 text-emerald-700',
   };
   return (
-    <span className={`px-3 py-1 text-xs font-medium rounded-full capitalize ${colors[status] ?? 'bg-slate-100 text-slate-600'}`}>
+    <span
+      className={`inline-flex items-center h-6 px-3 text-xs font-medium rounded-full capitalize ${colors[status] ?? 'bg-slate-100 text-slate-600'
+        }`}
+    >
       {status}
     </span>
   );

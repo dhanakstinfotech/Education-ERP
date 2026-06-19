@@ -9,6 +9,84 @@ import {
 import Modal from '../components/Modal';
 
 type View = 'rooms' | 'seating' | 'schedule';
+type RoomStatus = 'available' | 'occupied' | 'maintenance' | '';
+
+const ROOM_STATUS_STYLES: Record<string, { card: string; selected: string; chartHeader: string; icon: string }> = {
+  available: {
+    card: 'border-blue-200 bg-blue-50/50 hover:border-blue-300',
+    selected: 'border-blue-500 bg-blue-50 ring-2 ring-blue-200',
+    chartHeader: 'bg-blue-600',
+    icon: 'bg-blue-100 text-blue-600',
+  },
+  occupied: {
+    card: 'border-emerald-200 bg-emerald-50/50 hover:border-emerald-300',
+    selected: 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-200',
+    chartHeader: 'bg-emerald-600',
+    icon: 'bg-emerald-100 text-emerald-600',
+  },
+  maintenance: {
+    card: 'border-amber-200 bg-amber-50/50 hover:border-amber-300',
+    selected: 'border-amber-500 bg-amber-50 ring-2 ring-amber-200',
+    chartHeader: 'bg-amber-600',
+    icon: 'bg-amber-100 text-amber-600',
+  },
+};
+
+const SEAT_COLS = 5;
+const ROW_LABELS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+
+function buildSeatGrid(capacity: number, allocations: any[]) {
+  const occupied = new Map(allocations.map(a => [a.seat_number, a]));
+  const seats: { label: string; allocation: any | null }[] = [];
+  for (let i = 0; i < capacity; i++) {
+    const row = Math.floor(i / SEAT_COLS);
+    const col = (i % SEAT_COLS) + 1;
+    const label = `${ROW_LABELS[row] ?? 'X'}${col}`;
+    seats.push({ label, allocation: occupied.get(label) ?? null });
+  }
+  return seats;
+}
+
+function RoomStatusFilters({
+  value,
+  onChange,
+  counts,
+}: {
+  value: RoomStatus;
+  onChange: (status: RoomStatus) => void;
+  counts: Record<string, number>;
+}) {
+  const options: { id: RoomStatus; label: string }[] = [
+    { id: '', label: 'All' },
+    { id: 'available', label: 'Available' },
+    { id: 'occupied', label: 'Occupied' },
+    { id: 'maintenance', label: 'Maintenance' },
+  ];
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map(opt => (
+        <button
+          key={opt.id || 'all'}
+          onClick={() => onChange(opt.id)}
+          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            value === opt.id
+              ? opt.id === 'available' ? 'bg-blue-600 text-white'
+                : opt.id === 'occupied' ? 'bg-emerald-600 text-white'
+                : opt.id === 'maintenance' ? 'bg-amber-600 text-white'
+                : 'bg-slate-800 text-white'
+              : opt.id === 'available' ? 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100'
+                : opt.id === 'occupied' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                : opt.id === 'maintenance' ? 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100'
+                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          {opt.label} ({opt.id ? counts[opt.id] ?? 0 : counts.all ?? 0})
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function SeatingAllocation() {
   const [view, setView] = useState<View>('rooms');
@@ -18,6 +96,7 @@ export default function SeatingAllocation() {
   const [selectedRoom, setSelectedRoom] = useState<any>(null);
   const [showModal, setShowModal] = useState(false);
   const [editRoom, setEditRoom] = useState<any>(null);
+  const [roomStatusFilter, setRoomStatusFilter] = useState<RoomStatus>('');
   const { toast } = useToast();
 
   const loadRooms = useCallback(async () => {
@@ -30,7 +109,7 @@ export default function SeatingAllocation() {
   const loadAllocations = useCallback(async () => {
     const { data } = await supabase
       .from('seat_allocations')
-      .select('*, students(name, roll_no), exam_rooms(name), subjects(name, code)')
+      .select('*, students(name, roll_no), exam_rooms(id, name, capacity, status), subjects(name, code)')
       .order('exam_date');
     setAllocations(data ?? []);
   }, []);
@@ -114,6 +193,25 @@ export default function SeatingAllocation() {
   const totalCapacity = rooms.reduce((s, r) => s + r.capacity, 0);
   const occupied = allocations.length;
 
+  const statusCounts = {
+    all: rooms.length,
+    available: rooms.filter(r => r.status === 'available').length,
+    occupied: rooms.filter(r => r.status === 'occupied').length,
+    maintenance: rooms.filter(r => r.status === 'maintenance').length,
+  };
+
+  const filteredRooms = roomStatusFilter
+    ? rooms.filter(r => r.status === roomStatusFilter)
+    : rooms;
+
+  const allocationsByRoom = allocations.reduce((acc: Record<string, any[]>, a) => {
+    const roomId = a.room_id ?? a.exam_rooms?.id;
+    if (!roomId) return acc;
+    if (!acc[roomId]) acc[roomId] = [];
+    acc[roomId].push(a);
+    return acc;
+  }, {});
+
   return (
     <div className="space-y-6">
       <PageHeader title="Seating & Hall Allocation" subtitle="Manage exam rooms and seating arrangements">
@@ -142,37 +240,52 @@ export default function SeatingAllocation() {
       {view === 'rooms' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-200 flex justify-between">
+            <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-semibold text-slate-800">Exam Rooms</h2>
               <ActionButton size="sm" onClick={() => { setEditRoom(null); setShowModal(true); }}>
                 <Plus className="w-4 h-4" />Add Room
               </ActionButton>
             </div>
-            {loading ? <LoadingState /> : (
+            <div className="px-4 pt-4">
+              <RoomStatusFilters value={roomStatusFilter} onChange={setRoomStatusFilter} counts={statusCounts} />
+            </div>
+            {loading ? <LoadingState /> : filteredRooms.length === 0 ? (
+              <EmptyState message={`No ${roomStatusFilter || ''} rooms found`.trim()} />
+            ) : (
               <div className="grid sm:grid-cols-2 gap-4 p-4">
-                {rooms.map(room => (
+                {filteredRooms.map(room => {
+                  const styles = ROOM_STATUS_STYLES[room.status] ?? ROOM_STATUS_STYLES.available;
+                  const isSelected = selectedRoom?.id === room.id;
+                  const roomSeats = allocationsByRoom[room.id]?.length ?? 0;
+                  return (
                   <div
                     key={room.id}
                     onClick={() => setSelectedRoom(room)}
                     className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                      selectedRoom?.id === room.id ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'
+                      isSelected ? styles.selected : styles.card
                     }`}
                   >
-                    <div className="flex justify-between mb-2">
+                    <div className="flex justify-between items-center mb-2">
                       <div>
                         <p className="font-semibold text-slate-800">{room.name}</p>
                         <p className="text-xs text-slate-500">{room.building} · {room.floor}</p>
                       </div>
                       <StatusBadge status={room.status} />
                     </div>
-                    <p className="text-sm text-slate-600 mb-2">Capacity: <span className="font-medium">{room.capacity}</span></p>
+                    <p className="text-sm text-slate-600 mb-2">
+                      Capacity: <span className="font-medium">{room.capacity}</span>
+                      {roomSeats > 0 && (
+                        <span className="ml-2 text-emerald-600">· {roomSeats} seats filled</span>
+                      )}
+                    </p>
                     <div className="flex flex-wrap gap-1">
                       {(room.facilities ?? []).map((f: string) => (
-                        <span key={f} className="px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-xs">{f}</span>
+                        <span key={f} className="px-1.5 py-0.5 bg-white/80 text-slate-600 rounded text-xs border border-slate-200">{f}</span>
                       ))}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -183,18 +296,28 @@ export default function SeatingAllocation() {
               {selectedRoom ? (
                 <div className="space-y-4">
                   <div className="text-center pb-4 border-b">
-                    <div className="w-14 h-14 bg-blue-100 rounded-xl flex items-center justify-center mx-auto mb-2">
-                      <Building2 className="w-7 h-7 text-blue-600" />
+                    <div className={`w-14 h-14 rounded-xl flex items-center justify-center mx-auto mb-2 ${ROOM_STATUS_STYLES[selectedRoom.status]?.icon ?? 'bg-blue-100 text-blue-600'}`}>
+                      <Building2 className="w-7 h-7" />
                     </div>
                     <p className="font-bold text-slate-800">{selectedRoom.name}</p>
                     <p className="text-sm text-slate-500">{selectedRoom.building}</p>
                   </div>
-                  {[['Floor', selectedRoom.floor],['Capacity', selectedRoom.capacity],['Status', selectedRoom.status]].map(([k,v]) => (
-                    <div key={k} className="flex justify-between text-sm">
-                      <span className="text-slate-500">{k}</span>
-                      <span className="font-medium text-slate-800">{v}</span>
-                    </div>
-                  ))}
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Floor</span>
+                    <span className="font-medium text-slate-800">{selectedRoom.floor}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Capacity</span>
+                    <span className="font-medium text-slate-800">{selectedRoom.capacity}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-slate-500">Status</span>
+                    <StatusBadge status={selectedRoom.status} />
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Seats allocated</span>
+                    <span className="font-medium text-slate-800">{allocationsByRoom[selectedRoom.id]?.length ?? 0}</span>
+                  </div>
                   <div className="flex gap-2 pt-2">
                     <button onClick={() => { setEditRoom(selectedRoom); setShowModal(true); }} className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm">
                       <Edit2 className="w-4 h-4" />Edit
@@ -217,31 +340,75 @@ export default function SeatingAllocation() {
 
       {view === 'seating' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-          <h2 className="font-semibold text-slate-800 mb-6">Seating Chart</h2>
-          {allocations.length === 0 ? (
-            <EmptyState message="No seat allocations yet. Click Auto Allocate to get started." />
+          <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+            <div>
+              <h2 className="font-semibold text-slate-800">Seating Chart</h2>
+              <p className="text-sm text-slate-500 mt-1">Visual layout of seats per room — empty vs occupied</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-4 text-xs">
+              <span className="flex items-center gap-1.5"><span className="w-4 rounded border-2 border-dashed border-slate-300 bg-slate-50" /> Available seat</span>
+              <span className="flex items-center gap-1.5"><span className="w-4 rounded bg-emerald-100 border-2 border-emerald-400" /> Occupied seat</span>
+              <span className="flex items-center gap-1.5"><span className="w-4 rounded bg-amber-100 border-2 border-amber-400" /> Maintenance</span>
+            </div>
+          </div>
+
+          <div className="mb-6">
+            <RoomStatusFilters value={roomStatusFilter} onChange={setRoomStatusFilter} counts={statusCounts} />
+          </div>
+
+          {filteredRooms.length === 0 ? (
+            <EmptyState message={`No ${roomStatusFilter || ''} rooms to display`.trim()} />
           ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Object.entries(
-                allocations.reduce((acc: Record<string, any[]>, a) => {
-                  const key = a.exam_rooms?.name ?? 'Unknown';
-                  if (!acc[key]) acc[key] = [];
-                  acc[key].push(a);
-                  return acc;
-                }, {})
-              ).map(([roomName, seats]) => (
-                <div key={roomName} className="border border-slate-200 rounded-xl overflow-hidden">
-                  <div className="px-4 py-3 bg-slate-800 text-white text-sm font-medium">{roomName}</div>
-                  <div className="p-3 flex flex-wrap gap-2">
-                    {seats.map((s: any, i: number) => (
-                      <div key={i} className="w-16 h-14 bg-blue-50 border-2 border-blue-200 rounded-lg flex flex-col items-center justify-center text-xs">
-                        <span className="font-bold text-blue-700">{s.seat_number}</span>
-                        <span className="text-blue-500 truncate w-full text-center px-1">{s.students?.roll_no?.slice(-4)}</span>
-                      </div>
-                    ))}
+            <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filteredRooms.map(room => {
+                const roomAllocations = allocationsByRoom[room.id] ?? [];
+                const seats = buildSeatGrid(room.capacity, roomAllocations);
+                const filled = roomAllocations.length;
+                const vacant = room.capacity - filled;
+                const styles = ROOM_STATUS_STYLES[room.status] ?? ROOM_STATUS_STYLES.available;
+                const isMaintenance = room.status === 'maintenance';
+
+                return (
+                  <div key={room.id} className={`border rounded-xl overflow-hidden ${isMaintenance ? 'border-amber-200' : 'border-slate-200'}`}>
+                    <div className={`px-4 py-3 text-white text-sm font-medium flex items-center justify-between ${styles.chartHeader}`}>
+                      <span>{room.name}</span>
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/20 capitalize">{room.status}</span>
+                    </div>
+                    <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 flex justify-between text-xs text-slate-600">
+                      <span>{filled} occupied · {vacant} available</span>
+                      <span>{room.building}</span>
+                    </div>
+                    <div className="p-3">
+                      {isMaintenance ? (
+                        <div className="py-8 text-center text-amber-700 bg-amber-50 rounded-lg border border-amber-200 text-sm">
+                          Room under maintenance — seating unavailable
+                        </div>
+                      ) : (
+                        <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${SEAT_COLS}, minmax(0, 1fr))` }}>
+                          {seats.map(({ label, allocation }) => (
+                            <div
+                              key={label}
+                              title={allocation ? `${allocation.students?.name} (${allocation.students?.roll_no})` : `Seat ${label} — available`}
+                              className={`aspect-square min-h-[52px] rounded-lg flex flex-col items-center justify-center text-xs transition-colors ${
+                                allocation
+                                  ? 'bg-emerald-100 border-2 border-emerald-400 text-emerald-800'
+                                  : 'bg-slate-50 border-2 border-dashed border-slate-300 text-slate-400'
+                              }`}
+                            >
+                              <span className="font-bold">{label}</span>
+                              {allocation ? (
+                                <span className="truncate w-full text-center px-0.5 text-[10px] leading-tight">{allocation.students?.roll_no}</span>
+                              ) : (
+                                <span className="text-[10px]">Open</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

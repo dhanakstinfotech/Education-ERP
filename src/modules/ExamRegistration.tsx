@@ -223,11 +223,13 @@ export default function ExamRegistration() {
     }
   };
 
+  const activeExportLabel = TABS.find(t => t.id === activeTab)?.name ?? 'Data';
+
   return (
     <div className="space-y-6">
       <PageHeader title="Exam Registration" subtitle="Manage student registrations, arrears, and fee collection">
         <ActionButton variant="secondary" onClick={exportActiveTab}>
-          <Download className="w-4 h-4" />Export
+          <Download className="w-4 h-4" />Export {activeExportLabel}
         </ActionButton>
         {activeTab === 'arrear' ? (
           <ActionButton onClick={() => setShowArrearModal(true)}>
