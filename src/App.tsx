@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { ToastProvider } from './components/Toast';
 import { seedDatabase } from './lib/seed';
+import { runMigrations } from './lib/migrate';
 import ExamMaster from './modules/ExamMaster';
 import StudentEligibility from './modules/StudentEligibility';
 import ExamRegistration from './modules/ExamRegistration';
@@ -35,7 +36,11 @@ function App() {
   const [seeded, setSeeded] = useState(false);
 
   useEffect(() => {
-    seedDatabase().then(() => setSeeded(true));
+    (async () => {
+      await runMigrations();
+      await seedDatabase();
+      setSeeded(true);
+    })();
   }, []);
 
   const ActiveComponent = activeModule

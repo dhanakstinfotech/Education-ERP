@@ -273,6 +273,7 @@ CREATE TABLE IF NOT EXISTS arrear_registrations (
   original_semester int NOT NULL,
   attempt_number int NOT NULL DEFAULT 2,
   fee_amount numeric(10,2) NOT NULL DEFAULT 600,
+  fee_status text NOT NULL DEFAULT 'pending' CHECK (fee_status IN ('paid','pending','waived')),
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected')),
   created_at timestamptz DEFAULT now()
 );

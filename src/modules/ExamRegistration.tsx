@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Download, CheckCircle, XCircle, Eye, CreditCard, RefreshCw, UserPlus, Edit2, Trash2, DollarSign } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { arrearFeeStatusSupported, resolveArrearFeeStatus, setLocalArrearFeeStatus } from '../lib/migrate';
 import { useToast } from '../components/Toast';
 import {
   PageHeader, StatCard, DataTable, TableRow, Td, StatusBadge,
@@ -26,6 +27,7 @@ export default function ExamRegistration() {
   const [showModal, setShowModal] = useState(false);
   const [showArrearModal, setShowArrearModal] = useState(false);
   const [selectedReg, setSelectedReg] = useState<any>(null);
+  const [arrearHasFeeStatus, setArrearHasFeeStatus] = useState(false);
   const { toast } = useToast();
 
   const loadRegistrations = useCallback(async () => {
@@ -48,6 +50,10 @@ export default function ExamRegistration() {
 
   useEffect(() => { loadRegistrations(); loadArrears(); }, [loadRegistrations, loadArrears]);
 
+  useEffect(() => {
+    arrearFeeStatusSupported().then(setArrearHasFeeStatus);
+  }, []);
+
   const updateStatus = async (id: string, status: string) => {
     const { error } = await supabase.from('registrations').update({ status }).eq('id', id);
     if (error) toast(error.message, 'error');
@@ -64,6 +70,18 @@ export default function ExamRegistration() {
     const { error } = await supabase.from('arrear_registrations').update({ status }).eq('id', id);
     if (error) toast(error.message, 'error');
     else { toast(`Arrear ${status}`); loadArrears(); }
+  };
+
+  const updateArrearFeeStatus = async (id: string, fee_status: string) => {
+    if (arrearHasFeeStatus) {
+      const { error } = await supabase.from('arrear_registrations').update({ fee_status }).eq('id', id);
+      if (error) toast(error.message, 'error');
+      else { toast('Fee status updated'); loadArrears(); }
+      return;
+    }
+    setLocalArrearFeeStatus(id, fee_status);
+    setArrears(prev => [...prev]);
+    toast('Fee status updated');
   };
 
   const deleteRegistration = async (id: string) => {
@@ -96,63 +114,119 @@ export default function ExamRegistration() {
     a.subjects?.name?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const exportRegistrations = () => {
-    const data = filteredRegs.map(r => ({
-      'Roll No': r.students?.roll_no ?? '',
-      'Name': r.students?.name ?? '',
-      'Program': r.students?.programs?.name ?? '',
-      'Academic Year': r.academic_years?.name ?? '',
-      'Semester': r.semester_number,
-      'Exam Type': r.exam_types?.name ?? '',
-      'Fee Amount': r.fee_amount,
-      'Fee Status': r.fee_status,
-      'Status': r.status,
-    }));
+  const pendingRegs = filteredRegs.filter(r => r.status === 'pending');
+  const pendingArrs = filteredArrears.filter(a => a.status === 'pending');
+  const unpaidFees = filteredRegs.filter(r => r.fee_status !== 'paid');
+
+  const downloadCsv = (data: Record<string, string | number>[], filename: string, successMessage: string) => {
     if (!data.length) { toast('No data to export', 'info'); return; }
     const csv = [
       Object.keys(data[0]).join(','),
-      ...data.map(row => Object.values(row).join(','))
+      ...data.map(row => Object.values(row).map(v => String(v).includes(',') ? `"${v}"` : v).join(','))
     ].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `exam-registrations-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
-    toast('Registrations exported');
+    toast(successMessage);
+  };
+
+  const exportRegistrations = () => {
+    downloadCsv(
+      filteredRegs.map(r => ({
+        'Roll No': r.students?.roll_no ?? '',
+        'Name': r.students?.name ?? '',
+        'Program': r.students?.programs?.name ?? '',
+        'Academic Year': r.academic_years?.name ?? '',
+        'Semester': r.semester_number,
+        'Exam Type': r.exam_types?.name ?? '',
+        'Fee Amount': r.fee_amount,
+        'Fee Status': r.fee_status,
+        'Status': r.status,
+      })),
+      `exam-registrations-${new Date().toISOString().split('T')[0]}.csv`,
+      'Exam registrations exported',
+    );
   };
 
   const exportArrears = () => {
-    const data = filteredArrears.map(a => ({
-      'Roll No': a.students?.roll_no ?? '',
-      'Name': a.students?.name ?? '',
-      'Subject': a.subjects?.name ?? '',
-      'Subject Code': a.subjects?.code ?? '',
-      'Original Semester': a.original_semester,
-      'Attempt': a.attempt_number,
-      'Fee': a.fee_amount,
-      'Status': a.status,
-    }));
-    if (!data.length) { toast('No arrears to export', 'info'); return; }
-    const csv = [
-      Object.keys(data[0]).join(','),
-      ...data.map(row => Object.values(row).join(','))
-    ].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `arrear-registrations-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast('Arrears exported');
+    downloadCsv(
+      filteredArrears.map(a => ({
+        'Roll No': a.students?.roll_no ?? '',
+        'Name': a.students?.name ?? '',
+        'Program': a.students?.programs?.name ?? '',
+        'Subject': a.subjects?.name ?? '',
+        'Subject Code': a.subjects?.code ?? '',
+        'Original Semester': a.original_semester,
+        'Attempt': a.attempt_number,
+        'Fee': a.fee_amount,
+        'Fee Status': resolveArrearFeeStatus(a),
+        'Status': a.status,
+      })),
+      `arrear-registrations-${new Date().toISOString().split('T')[0]}.csv`,
+      'Arrear registrations exported',
+    );
+  };
+
+  const exportFeeCollection = () => {
+    downloadCsv(
+      unpaidFees.map(r => ({
+        'Roll No': r.students?.roll_no ?? '',
+        'Student': r.students?.name ?? '',
+        'Program': r.students?.programs?.name ?? '',
+        'Fee Amount': r.fee_amount,
+        'Fee Status': r.fee_status,
+        'Reg Status': r.status,
+      })),
+      `fee-collection-${new Date().toISOString().split('T')[0]}.csv`,
+      'Fee collection data exported',
+    );
+  };
+
+  const exportPendingApprovals = () => {
+    const data = [
+      ...pendingRegs.map(r => ({
+        'Type': 'Exam Reg',
+        'Roll No': r.students?.roll_no ?? '',
+        'Student': r.students?.name ?? '',
+        'Details': `Sem ${r.semester_number} - ${r.exam_types?.name ?? 'Regular'}`,
+        'Fee': r.fee_amount,
+        'Fee Status': r.fee_status,
+        'Status': r.status,
+      })),
+      ...pendingArrs.map(a => ({
+        'Type': 'Arrear',
+        'Roll No': a.students?.roll_no ?? '',
+        'Student': a.students?.name ?? '',
+        'Details': `${a.subjects?.name ?? ''} (Attempt ${a.attempt_number})`,
+        'Fee': a.fee_amount,
+        'Fee Status': resolveArrearFeeStatus(a),
+        'Status': a.status,
+      })),
+    ];
+    downloadCsv(
+      data,
+      `pending-approvals-${new Date().toISOString().split('T')[0]}.csv`,
+      'Pending approvals exported',
+    );
+  };
+
+  const exportActiveTab = () => {
+    switch (activeTab) {
+      case 'registration': exportRegistrations(); break;
+      case 'arrear': exportArrears(); break;
+      case 'fee': exportFeeCollection(); break;
+      case 'approval': exportPendingApprovals(); break;
+    }
   };
 
   return (
     <div className="space-y-6">
       <PageHeader title="Exam Registration" subtitle="Manage student registrations, arrears, and fee collection">
-        <ActionButton variant="secondary" onClick={activeTab === 'arrear' ? exportArrears : exportRegistrations}>
+        <ActionButton variant="secondary" onClick={exportActiveTab}>
           <Download className="w-4 h-4" />Export
         </ActionButton>
         {activeTab === 'arrear' ? (
@@ -241,9 +315,9 @@ export default function ExamRegistration() {
 
             {/* Arrear Registrations Tab */}
             {activeTab === 'arrear' && (
-              <DataTable columns={['Roll No', 'Student', 'Program', 'Subject', 'Attempt', 'Fee', 'Status', 'Actions']}>
+              <DataTable columns={['Roll No', 'Student', 'Program', 'Subject', 'Attempt', 'Fee', 'Fee Status', 'Status', 'Actions']}>
                 {filteredArrears.length === 0
-                  ? <tr><td colSpan={8}><EmptyState message="No arrear registrations" /></td></tr>
+                  ? <tr><td colSpan={9}><EmptyState message="No arrear registrations" /></td></tr>
                   : filteredArrears.map(a => (
                     <TableRow key={a.id}>
                       <Td><span className="font-mono text-xs">{a.students?.roll_no}</span></Td>
@@ -256,7 +330,8 @@ export default function ExamRegistration() {
                         </div>
                       </Td>
                       <Td className="text-slate-500">Attempt {a.attempt_number} (Sem {a.original_semester})</Td>
-                      <Td className="font-medium text-slate-800">₹{a.fee_amount}</Td>
+                      <Td className="font-medium text-slate-800">₹{a.fee_amount?.toLocaleString()}</Td>
+                      <Td><StatusBadge status={resolveArrearFeeStatus(a)} /></Td>
                       <Td><StatusBadge status={a.status} /></Td>
                       <Td>
                         <div className="flex gap-1">
@@ -275,6 +350,11 @@ export default function ExamRegistration() {
                               <CheckCircle className="w-4 h-4 text-blue-500" />
                             </button>
                           )}
+                          {resolveArrearFeeStatus(a) === 'pending' && (
+                            <button onClick={() => updateArrearFeeStatus(a.id, 'paid')} className="p-1.5 hover:bg-amber-50 rounded-lg" title="Mark Paid">
+                              <DollarSign className="w-4 h-4 text-amber-500" />
+                            </button>
+                          )}
                           <button onClick={() => deleteArrear(a.id)} className="p-1.5 hover:bg-red-50 rounded-lg" title="Delete">
                             <Trash2 className="w-4 h-4 text-red-400" />
                           </button>
@@ -288,9 +368,9 @@ export default function ExamRegistration() {
             {/* Fee Collection Tab */}
             {activeTab === 'fee' && (
               <DataTable columns={['Roll No', 'Student', 'Program', 'Fee Amount', 'Fee Status', 'Reg Status', 'Actions']}>
-                {filteredRegs.filter(r => r.fee_status !== 'paid').length === 0
+                {unpaidFees.length === 0
                   ? <tr><td colSpan={7}><EmptyState message="All fees collected!" /></td></tr>
-                  : filteredRegs.filter(r => r.fee_status !== 'paid').map(r => (
+                  : unpaidFees.map(r => (
                     <TableRow key={r.id}>
                       <Td><span className="font-mono text-xs">{r.students?.roll_no}</span></Td>
                       <Td className="font-medium text-slate-800">{r.students?.name}</Td>
@@ -315,12 +395,10 @@ export default function ExamRegistration() {
 
             {/* Pending Approvals Tab */}
             {activeTab === 'approval' && (
-              <DataTable columns={['Type', 'Roll No', 'Student', 'Details', 'Fee', 'Status', 'Actions']}>
+              <DataTable columns={['Type', 'Roll No', 'Student', 'Details', 'Fee', 'Fee Status', 'Status', 'Actions']}>
                 {(() => {
-                  const pendingRegs = filteredRegs.filter(r => r.status === 'pending');
-                  const pendingArrs = filteredArrears.filter(a => a.status === 'pending');
                   if (pendingRegs.length === 0 && pendingArrs.length === 0) {
-                    return <tr><td colSpan={7}><EmptyState message="No pending approvals" /></td></tr>;
+                    return <tr><td colSpan={8}><EmptyState message="No pending approvals" /></td></tr>;
                   }
                   return (
                     <>
@@ -332,14 +410,8 @@ export default function ExamRegistration() {
                           <Td><span className="font-mono text-xs">{r.students?.roll_no}</span></Td>
                           <Td className="font-medium text-slate-800">{r.students?.name}</Td>
                           <Td className="text-slate-500 text-xs">Sem {r.semester_number} - {r.exam_types?.name ?? 'Regular'}</Td>
-                          <Td>
-                            <span className={`font-medium ${r.fee_status === 'paid' ? 'text-emerald-600' : 'text-red-600'}`}>
-                              ₹{r.fee_amount?.toLocaleString()}
-                            </span>
-                            <span className={`ml-1 text-xs ${r.fee_status === 'paid' ? 'text-emerald-500' : 'text-amber-500'}`}>
-                              ({r.fee_status})
-                            </span>
-                          </Td>
+                          <Td className="font-medium text-slate-800">₹{r.fee_amount?.toLocaleString()}</Td>
+                          <Td><StatusBadge status={r.fee_status} /></Td>
                           <Td><StatusBadge status={r.status} /></Td>
                           <Td>
                             <div className="flex gap-2">
@@ -361,9 +433,8 @@ export default function ExamRegistration() {
                           <Td><span className="font-mono text-xs">{a.students?.roll_no}</span></Td>
                           <Td className="font-medium text-slate-800">{a.students?.name}</Td>
                           <Td className="text-slate-500 text-xs">{a.subjects?.name} (Attempt {a.attempt_number})</Td>
-                          <Td>
-                            <span className="font-medium text-slate-800">₹{a.fee_amount}</span>
-                          </Td>
+                          <Td className="font-medium text-slate-800">₹{a.fee_amount?.toLocaleString()}</Td>
+                          <Td><StatusBadge status={resolveArrearFeeStatus(a)} /></Td>
                           <Td><StatusBadge status={a.status} /></Td>
                           <Td>
                             <div className="flex gap-2">
@@ -396,7 +467,10 @@ export default function ExamRegistration() {
       {/* New Arrear Registration Modal */}
       {showArrearModal && (
         <Modal title="New Arrear Registration" onClose={() => setShowArrearModal(false)} size="lg">
-          <ArrearForm onClose={() => { setShowArrearModal(false); loadArrears(); }} />
+          <ArrearForm
+            feeStatusSupported={arrearHasFeeStatus}
+            onClose={() => { setShowArrearModal(false); loadArrears(); arrearFeeStatusSupported().then(setArrearHasFeeStatus); }}
+          />
         </Modal>
       )}
 
@@ -525,13 +599,13 @@ function RegistrationForm({ onClose }: { onClose: () => void }) {
   );
 }
 
-function ArrearForm({ onClose }: { onClose: () => void }) {
+function ArrearForm({ onClose, feeStatusSupported }: { onClose: () => void; feeStatusSupported: boolean }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [students, setStudents] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<any[]>([]);
   const [form, setForm] = useState({
-    student_id: '', subject_id: '', original_semester: 3, attempt_number: 1, fee_amount: 500, status: 'pending',
+    student_id: '', subject_id: '', original_semester: 3, attempt_number: 1, fee_amount: 500, fee_status: 'pending', status: 'pending',
   });
   const f = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(p => ({ ...p, [k]: e.target.type === 'number' ? Number(e.target.value) : e.target.value }));
@@ -544,9 +618,15 @@ function ArrearForm({ onClose }: { onClose: () => void }) {
   const save = async () => {
     if (!form.student_id || !form.subject_id) { toast('Student and subject required', 'error'); return; }
     setSaving(true);
-    const { error } = await supabase.from('arrear_registrations').insert(form);
+    const { fee_status, ...base } = form;
+    const payload = feeStatusSupported ? { ...base, fee_status } : base;
+    const { data, error } = await supabase.from('arrear_registrations').insert(payload).select('id').single();
     if (error) toast(error.message, 'error');
-    else { toast('Arrear registration created'); onClose(); }
+    else {
+      if (!feeStatusSupported) setLocalArrearFeeStatus(data.id, fee_status);
+      toast('Arrear registration created');
+      onClose();
+    }
     setSaving(false);
   };
 
@@ -572,6 +652,9 @@ function ArrearForm({ onClose }: { onClose: () => void }) {
       </div>
       <FormField label="Fee Amount (₹)">
         <Input type="number" value={form.fee_amount} onChange={f('fee_amount')} />
+      </FormField>
+      <FormField label="Fee Status">
+        <Select value={form.fee_status} onChange={f('fee_status')} options={[{value:'pending',label:'Pending'},{value:'paid',label:'Paid'},{value:'waived',label:'Waived'}]} />
       </FormField>
       <div className="flex justify-end gap-3 pt-2">
         <ActionButton variant="secondary" onClick={onClose}>Cancel</ActionButton>
